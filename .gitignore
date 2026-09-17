@@ -6,4 +6,7 @@ dataset/*.jsonl
 dataset/raw/
 *.log
 .DS_Store
-.DS_Store
+training/data/
+training/output/
+training/config.yaml
+config/sources.yaml

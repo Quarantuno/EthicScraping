@@ -15,6 +15,18 @@ output:
   # null = tieni tutto (con etichetta di confidenza sulla licenza)
   # "medium" o "high" = scarta le pagine la cui licenza non e' abbastanza chiara
   min_license_confidence: null
+  # Deduplica "fuzzy": distanza di Hamming massima (su 64 bit) perche' due
+  # pagine siano considerate quasi-duplicati e scartate. Piu' basso = piu'
+  # severo (solo quasi-identici). Calibrato per pagine di almeno un centinaio
+  # di parole; su testi molto corti alza il valore. null = disattiva, tieni
+  # solo la dedup esatta.
+  near_duplicate_threshold: 8
+  # PII avanzata via NER (nomi propri, luoghi in linguaggio naturale), oltre
+  # al filtro regex sempre attivo. Richiede: pip install spacy && python -m
+  # spacy download it_core_news_sm (o un altro modello). Se non installato,
+  # viene semplicemente ignorato con un avviso nei log.
+  use_ner: false
+  ner_model: "it_core_news_sm"
 
 politeness:
   default_delay_seconds: 2.0

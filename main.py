@@ -22,6 +22,7 @@ import yaml
 from scraper.fetcher import EthicalFetcher
 from scraper.crawler import Crawler
 from pipeline.dataset_writer import DatasetWriter
+from pipeline.review import ReviewSession
 
 
 def load_config(path: str) -> dict:
@@ -87,6 +88,9 @@ def run(config_path: str, verbose: bool):
         output_path=output_cfg.get("dataset_path", "dataset/output.jsonl"),
         min_license_confidence=output_cfg.get("min_license_confidence"),
         min_word_count=output_cfg.get("min_word_count", 50),
+        near_duplicate_threshold=output_cfg.get("near_duplicate_threshold", 8),
+        use_ner=output_cfg.get("use_ner", False),
+        ner_model=output_cfg.get("ner_model", "it_core_news_sm"),
     )
 
     logger.info("Avvio scraping di %d seed -> %s", len(seeds), writer.output_path)
@@ -109,6 +113,59 @@ def run(config_path: str, verbose: bool):
                                 f": {result.error}" if result.error else "")
 
     logger.info("Fine. Statistiche: %s", writer.stats)
+
+
+@cli.command()
+@click.option("--dataset", "dataset_path", required=True, help="Percorso al file JSONL da revisionare")
+@click.option("--limit", type=int, default=None, help="Rivedi al massimo N record in questa sessione")
+@click.option("--preview-chars", type=int, default=600, help="Quanti caratteri di testo mostrare per record")
+def review(dataset_path: str, limit: int, preview_chars: int):
+    """Revisione umana interattiva dei record di un dataset gia' prodotto.
+
+    Le decisioni vengono salvate subito su disco: puoi interrompere con
+    Ctrl+C o 'q' e riprendere in seguito, i record gia' decisi non
+    verranno riproposti.
+    """
+    session = ReviewSession(dataset_path)
+    pending = session.pending()
+
+    if not pending:
+        click.echo(f"Nessun record da revisionare. Statistiche: {session.stats()}")
+        return
+
+    if limit:
+        pending = pending[:limit]
+
+    click.echo(f"{len(pending)} record da revisionare in questa sessione "
+               f"(totale dataset: {session.stats()['total']}).")
+    click.echo("Comandi: [a]pprova  [r]ifiuta  [s]alta  [q]uit\n")
+
+    for i, record in enumerate(pending, start=1):
+        click.echo("-" * 70)
+        click.echo(f"[{i}/{len(pending)}] {record.get('url')}")
+        click.echo(f"Titolo: {record.get('title')}")
+        click.echo(f"Licenza: {record.get('license')} "
+                   f"(confidenza: {record.get('license_confidence')})")
+        click.echo(f"Parole: {record.get('word_count')}  "
+                   f"PII redatte: {record.get('pii_redactions') or 'nessuna'}")
+        text = record.get("text", "")
+        click.echo(f"\n{text[:preview_chars]}"
+                   f"{'...' if len(text) > preview_chars else ''}\n")
+
+        choice = click.prompt("Decisione", type=click.Choice(
+            ["a", "r", "s", "q"], case_sensitive=False), default="s")
+
+        if choice == "q":
+            click.echo("Interrotto dall'utente.")
+            break
+        if choice == "s":
+            continue
+        session.decide(record, "approved" if choice == "a" else "rejected")
+
+    click.echo("-" * 70)
+    click.echo(f"Fine sessione. Statistiche: {session.stats()}")
+    click.echo(f"Approvati -> {session.approved_path}")
+    click.echo(f"Rifiutati -> {session.rejected_path}")
 
 
 if __name__ == "__main__":

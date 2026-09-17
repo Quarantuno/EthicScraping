@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.text_extractor import extract_text
 from pipeline.pii_filter import redact_pii
-from pipeline.dedup import Deduplicator, content_hash
+from pipeline.ner_pii import redact_named_entities, is_available, reset_cache
+from pipeline.dedup import Deduplicator, content_hash, simhash, hamming_distance
 from pipeline.dataset_writer import DatasetWriter
 from scraper.license_detector import detect_license
 from scraper.fetcher import FetchResult
@@ -66,6 +67,25 @@ class TestPiiFilter(unittest.TestCase):
         self.assertGreaterEqual(counts["PHONE"], 1)
 
 
+class TestNerPii(unittest.TestCase):
+    """spaCy e' una dipendenza opzionale e non e' installata in questo
+    ambiente: qui verifichiamo che il degrado sia sicuro (nessuna
+    eccezione, testo invariato) quando il modello non c'e', che e'
+    esattamente lo scenario di chi non ha fatto `pip install spacy`."""
+
+    def setUp(self):
+        reset_cache()
+
+    def test_reports_unavailable_without_spacy_or_model(self):
+        self.assertFalse(is_available("un-modello-che-non-esiste"))
+
+    def test_degrades_to_noop_when_model_unavailable(self):
+        text = "Mario Rossi vive a Milano."
+        redacted, counts = redact_named_entities(text, model_name="un-modello-che-non-esiste")
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts, {})
+
+
 class TestDedup(unittest.TestCase):
     def test_detects_exact_and_whitespace_variant_duplicates(self):
         dedup = Deduplicator()
@@ -75,6 +95,51 @@ class TestDedup(unittest.TestCase):
 
     def test_content_hash_is_deterministic(self):
         self.assertEqual(content_hash("Ciao Mondo"), content_hash("ciao   mondo"))
+
+    # Testo "da pagina web" realistico (>100 parole): il SimHash e' calibrato
+    # su documenti di questa taglia, non su singole frasi brevi.
+    _LONG_ORIGINAL = (
+        "Questo articolo parla di intelligenza artificiale e di come i modelli "
+        "linguistici vengano addestrati su grandi quantita' di testo raccolto dal "
+        "web in modo responsabile e trasparente. La raccolta dei dati deve sempre "
+        "rispettare le regole del sito, la licenza dei contenuti e la privacy delle "
+        "persone coinvolte. Un buon dataset per l'addestramento tiene traccia della "
+        "provenienza di ogni documento, cosi' da poter verificare in ogni momento da "
+        "dove arrivano le informazioni usate per insegnare al modello a rispondere. "
+        "Questo approccio riduce il rischio di includere contenuti protetti da "
+        "copyright o dati personali non autorizzati, e rende il processo piu' "
+        "trasparente per chiunque voglia verificarlo in futuro."
+    )
+    _LONG_UNRELATED = (
+        "La ricetta della carbonara prevede uova, guanciale, pecorino romano e "
+        "pepe nero, senza panna ne' aglio, cotta a fuoco basso. Il segreto sta "
+        "nella mantecatura fuori dal fuoco, per evitare che l'uovo si strapazzi a "
+        "contatto con la pasta ancora troppo calda. Un buon piatto di carbonara si "
+        "riconosce dalla cremosita' del condimento e dal giusto equilibrio tra il "
+        "grasso del guanciale e la sapidita' del formaggio, senza bisogno di panna "
+        "o altri ingredienti che nella ricetta originale romana non compaiono."
+    )
+
+    def test_simhash_flags_near_duplicate_text_as_close(self):
+        near_dup = self._LONG_ORIGINAL.replace("responsabile", "consapevole")
+
+        dist_near = hamming_distance(simhash(self._LONG_ORIGINAL), simhash(near_dup))
+        dist_far = hamming_distance(simhash(self._LONG_ORIGINAL), simhash(self._LONG_UNRELATED))
+        self.assertLess(dist_near, dist_far)
+
+    def test_deduplicator_drops_near_duplicate_pages(self):
+        dedup = Deduplicator(near_duplicate_threshold=8)
+        near_dup = self._LONG_ORIGINAL.replace("responsabile", "consapevole")
+
+        self.assertFalse(dedup.is_duplicate(self._LONG_ORIGINAL))
+        self.assertTrue(dedup.is_duplicate(near_dup))
+        self.assertFalse(dedup.is_duplicate(self._LONG_UNRELATED))
+
+    def test_deduplicator_can_disable_fuzzy_matching(self):
+        dedup = Deduplicator(near_duplicate_threshold=None)
+        near_dup = self._LONG_ORIGINAL.replace("responsabile", "consapevole")
+        self.assertFalse(dedup.is_duplicate(self._LONG_ORIGINAL))
+        self.assertFalse(dedup.is_duplicate(near_dup))  # solo hash esatto: non e' un duplicato
 
 
 class TestLicenseDetector(unittest.TestCase):

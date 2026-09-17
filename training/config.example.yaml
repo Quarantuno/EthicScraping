@@ -1,0 +1,42 @@
+# Config di esempio per training/train_lora.py.
+# Copia in training/config.yaml e personalizza.
+
+# Modello base open source da cui partire. Scegline uno compatibile con
+# il tuo hardware: modelli piccoli (~0.5-2B parametri) girano anche su
+# CPU/Mac per fare una prova; modelli piu' grandi richiedono una GPU con
+# VRAM sufficiente. Esempi ragionevoli per iniziare:
+#   - "Qwen/Qwen2.5-0.5B"      (molto leggero, buono per test rapidi)
+#   - "Qwen/Qwen2.5-1.5B"
+#   - "mistralai/Mistral-7B-v0.3"  (richiede GPU con parecchia VRAM)
+base_model: "Qwen/Qwen2.5-0.5B"
+
+data:
+  train_file: "training/data/train.jsonl"   # prodotto da prepare_dataset.py
+  val_file: "training/data/val.jsonl"       # puo' essere assente/vuoto
+  max_seq_length: 1024
+
+# Parametri LoRA: alleniamo solo un piccolo numero di parametri aggiuntivi
+# invece di tutto il modello, molto piu' leggero in termini di VRAM/tempo.
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  # Nomi dei moduli su cui applicare LoRA: variano da modello a modello
+  # (per famiglie Llama/Mistral/Qwen questi due sono un buon punto di
+  # partenza). Se train_lora.py segnala che non li trova, ispeziona
+  # `model.named_modules()` e aggiorna questa lista.
+  target_modules: ["q_proj", "v_proj"]
+
+training:
+  output_dir: "training/output"
+  num_train_epochs: 3
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  learning_rate: 0.0002
+  logging_steps: 10
+  save_steps: 200
+  eval_steps: 200
+  # Attiva UNA delle due sotto solo se la tua GPU la supporta (velocizza
+  # e riduce la memoria). Su CPU/Mac lasciale entrambe a false.
+  fp16: false
+  bf16: false

@@ -15,23 +15,34 @@ from scraper.fetcher import FetchResult
 
 from .text_extractor import extract_text
 from .pii_filter import redact_pii
+from .ner_pii import redact_named_entities
 from .dedup import Deduplicator, content_hash
 
 
 class DatasetWriter:
     def __init__(self, output_path: str, min_license_confidence: Optional[str] = None,
-                 min_word_count: int = 50):
+                 min_word_count: int = 50, near_duplicate_threshold: Optional[int] = 8,
+                 use_ner: bool = False, ner_model: str = "it_core_news_sm"):
         """
         min_license_confidence: None (keep everything, flagged), or one of
             "medium" / "high" to DROP records whose license confidence is
             lower than the threshold. Use "high" for a strictly
             "only-clearly-licensed-content" dataset.
+        near_duplicate_threshold: max Hamming distance (out of 64 bits) for
+            two pages to be treated as near-duplicates and dropped. None
+            disables fuzzy dedup (exact-match dedup only).
+        use_ner: if True, also redacts person names / places found via
+            spaCy NER, on top of the regex-based redaction. Requires spaCy
+            and `ner_model` to be installed; degrades to a no-op (with a
+            warning already logged by ner_pii) if they aren't.
         """
         self.output_path = Path(output_path)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.min_license_confidence = min_license_confidence
         self.min_word_count = min_word_count
-        self.dedup = Deduplicator()
+        self.dedup = Deduplicator(near_duplicate_threshold=near_duplicate_threshold)
+        self.use_ner = use_ner
+        self.ner_model = ner_model
         self.stats = {"written": 0, "skipped_license": 0, "skipped_duplicate": 0,
                       "skipped_too_short": 0, "skipped_fetch": 0}
 
@@ -62,6 +73,13 @@ class DatasetWriter:
             return None
 
         redacted_text, pii_counts = redact_pii(extracted["text"])
+
+        if self.use_ner:
+            redacted_text, ner_counts = redact_named_entities(
+                redacted_text, model_name=self.ner_model
+            )
+            for label, count in ner_counts.items():
+                pii_counts[label] = pii_counts.get(label, 0) + count
 
         if self.dedup.is_duplicate(redacted_text):
             self.stats["skipped_duplicate"] += 1

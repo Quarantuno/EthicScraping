@@ -15,6 +15,8 @@ pandas>=2.0
 tldextract>=5.1
 
 # PII detection (lightweight regex-based, no heavy NLP deps required)
-# Optional, heavier NLP-based PII detection (uncomment if needed):
-# presidio-analyzer>=2.2
+# Optional, heavier NLP-based PII detection (nomi propri, luoghi):
+# abilita con output.use_ner: true in config/sources.yaml. Richiede:
+#   pip install spacy
+#   python -m spacy download it_core_news_sm
 # spacy>=3.7

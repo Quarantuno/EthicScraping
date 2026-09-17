@@ -1,0 +1,17 @@
+# Dipendenze per il fine-tuning (fase 2). Pesanti e separate da
+# requirements.txt: la maggior parte degli utenti di ScrapeLLM fara' solo
+# scraping/dataset building e non ha bisogno di scaricare torch.
+#
+#   pip install -r training/requirements-training.txt
+#
+# bitsandbytes (quantizzazione 4/8-bit) funziona bene su GPU NVIDIA/CUDA;
+# su Mac (MPS) o CPU-only non e' supportato allo stesso modo: se sei su
+# Mac, commenta quella riga e allena in precisione piena o con LoRA
+# "liscio" (senza quantizzazione).
+torch>=2.1
+transformers>=4.40
+peft>=0.10
+datasets>=2.18
+accelerate>=0.28
+sentencepiece>=0.2
+# bitsandbytes>=0.43  # solo GPU NVIDIA/CUDA
