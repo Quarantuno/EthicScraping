@@ -1,76 +1,79 @@
 # ScrapeLLM
 
-Pipeline open source e gratuita per raccogliere dati dal web in modo
-**etico e tracciabile**, rivederli, e trasformarli in dataset pronti per
-addestrare modelli AI a un uso consapevole dei dati.
+*[Leggi questo in italiano](README.it.md)*
 
-L'idea di fondo: un modello addestrato su dati raccolti senza cura del
-consenso, della licenza e della privacy non puo' essere "consapevole" di
-nulla. Quindi la consapevolezza si costruisce a monte, nella pipeline di
-raccolta e revisione, non solo nel prompt del modello finale.
+Open source, free pipeline for collecting web data in an **ethical,
+traceable** way, reviewing it by hand, and turning it into datasets
+ready for training AI models on responsible data use.
 
-## Cosa fa
+The core idea: a model trained on data collected without care for
+consent, licensing, and privacy can't be "responsible" about anything.
+So that responsibility has to be built upstream, into the collection and
+review pipeline — not just into the final model's prompt.
 
-### Fase 1 — Scraping etico + costruzione dataset
+## What it does
 
-- **Scraper etico** (`scraper/`): rispetta sempre `robots.txt`, applica
-  rate limiting per dominio (default 2s, o il `crawl-delay` del sito se
-  maggiore), supporta una deny-list di domini da escludere sempre, e usa
-  un User-Agent onesto e identificabile (niente finti browser).
-- **Rilevamento licenza** (`scraper/license_detector.py`): tenta di
-  individuare la licenza di ogni pagina (link/meta `rel="license"`,
-  pattern Creative Commons, domini noti come Wikipedia/Gutenberg). Se non
-  trova nulla, la pagina viene etichettata come licenza "unknown" — mai
-  assunta open di default.
-- **Pipeline dati** (`pipeline/`): pulisce l'HTML in testo, **redige i
-  dati personali** (email, telefoni, IBAN, IP, numeri tipo carta di
-  credito via regex; opzionalmente anche nomi propri e luoghi via NER,
-  vedi sotto), deduplica i contenuti (sia hash esatto sia quasi-duplicati
-  via SimHash), e scrive ogni record in JSONL con provenienza completa
-  (URL, dominio, licenza, timestamp di raccolta).
-- **Revisione umana** (`pipeline/review.py`, comando `main.py review`):
-  scorre il dataset prodotto e fa approvare/rifiutare ogni record a
-  occhio umano, salvando lo stato cosi' da poter interrompere e
-  riprendere. Produce `*_approved.jsonl` e `*_rejected.jsonl`.
-- **CLI** (`main.py`): comandi `run` (scraping + pipeline) e `review`
-  (revisione umana), entrambi guidati da config YAML/opzioni.
+### Phase 1 — Ethical scraping + dataset building
 
-### Fase 2 — Fine-tuning (scaffold, non ancora eseguito end-to-end)
+- **Ethical scraper** (`scraper/`): always honors `robots.txt`, applies
+  per-domain rate limiting (2s default, or the site's own `crawl-delay`
+  if higher), supports a deny-list of domains to always skip, and uses
+  an honest, identifiable User-Agent (no fake browsers).
+- **License detection** (`scraper/license_detector.py`): best-effort
+  detection of each page's license (`rel="license"` link/meta tag,
+  Creative Commons patterns, known domains like Wikipedia/Gutenberg). If
+  nothing is found, the page is labeled license "unknown" — never
+  assumed open by default.
+- **Data pipeline** (`pipeline/`): cleans HTML into text, **redacts
+  personal data** (emails, phone numbers, IBANs, IPs, credit-card-like
+  numbers via regex; optionally also names and places via NER, see
+  below), deduplicates content (both exact hashing and near-duplicates
+  via SimHash), and writes each record to JSONL with full provenance
+  (URL, domain, license, collection timestamp).
+- **Human review** (`pipeline/review.py`, `main.py review` command):
+  walks through the produced dataset and has a human approve/reject
+  each record, saving progress so you can stop and resume. Produces
+  `*_approved.jsonl` and `*_rejected.jsonl`.
+- **CLI** (`main.py`): `run` (scraping + pipeline) and `review` (human
+  review) commands, both driven by YAML config / options.
 
-Cartella `training/`: preparazione dataset per il training e script di
-fine-tuning LoRA su un modello open source. Vedi `training/README.md`
-per i dettagli — **non lanciarlo su dati non revisionati**.
+### Phase 2 — Fine-tuning (scaffold, not yet run end-to-end)
 
-## PII: due livelli
+`training/` directory: dataset prep and a LoRA fine-tuning script for an
+open source base model. See `training/README.md` for details — **don't
+run it on unreviewed data**.
 
-1. **Regex (sempre attivo)**: email, telefoni, IBAN, IP, numeri tipo
-   carta di credito — pattern strutturali, veloce, nessuna dipendenza
-   pesante.
-2. **NER (opzionale)**: nomi propri e luoghi in linguaggio naturale, via
-   spaCy. Disattivato di default perche' e' una dipendenza pesante da
-   installare a parte:
+## PII: two layers
+
+1. **Regex (always on)**: emails, phone numbers, IBANs, IPs,
+   credit-card-like numbers — structural patterns, fast, no heavy
+   dependencies.
+2. **NER (optional)**: proper names and places in natural language, via
+   spaCy. Off by default because it's a heavy dependency to install
+   separately:
    ```bash
    pip install spacy
-   python -m spacy download it_core_news_sm
+   python -m spacy download en_core_web_sm
    ```
-   poi `output.use_ner: true` in `config/sources.yaml`. Se spaCy o il
-   modello non sono installati, il sistema degrada da solo alla sola
-   redazione regex (con un avviso nei log), senza bloccarsi.
+   then set `output.use_ner: true` in `config/sources.yaml`. If spaCy or
+   the model aren't installed, the system falls back on its own to
+   regex-only redaction (with a log warning), without breaking.
 
-Nessuno dei due e' una garanzia assoluta, specialmente su fonti ad alto
-rischio (forum, commenti, contenuti generati dagli utenti): per quelle
-serve sempre una revisione umana (`main.py review`) prima dell'uso.
+Neither layer is an absolute guarantee, especially on higher-risk
+sources (forums, comments, user-generated content): those always need a
+human review pass (`main.py review`) before use.
 
-## Cosa NON fa ancora (prossimi passi possibili)
+## What it doesn't do yet (possible next steps)
 
-- Training effettivamente eseguito ed eval del modello risultante
-  (lo scaffold in `training/` c'e', va validato su hardware reale).
-- Indice LSH per la deduplica fuzzy su larga scala (oggi confronto O(n)
-  per documento, adatto a dataset di migliaia di pagine, non milioni).
-- Un piccolo set di prompt di valutazione sulla "consapevolezza" del
-  modello finale (vedi `training/README.md`).
+- An actual training run and evaluation of the resulting model (the
+  scaffold in `training/` is there, it needs validating on real
+  hardware).
+- An LSH index for large-scale fuzzy dedup (today it's an O(n) per-doc
+  comparison, fine for datasets of thousands of pages, not millions).
+- A small set of evaluation prompts to probe the final model's "data
+  awareness" (see `training/README.md`).
 
-## Installazione
+## Installation
 
 ```bash
 python3 -m venv venv
@@ -78,47 +81,47 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Se la creazione del virtualenv da' problemi nel tuo ambiente, va bene
-anche `pip install -r requirements.txt` diretto (senza venv), a costo di
-installare le dipendenze a livello di sistema/utente.
+If creating the virtualenv gives you trouble in your environment, a
+direct `pip install -r requirements.txt` (no venv) also works, at the
+cost of installing dependencies system/user-wide.
 
-## Uso
+## Usage
 
-### 1. Configura e lancia lo scraping
+### 1. Configure and run the scraper
 
 ```bash
 cp config/sources.example.yaml config/sources.yaml
 ```
 
-Modifica `config/sources.yaml`:
-- **`project.user_agent`**: metti un contatto reale (email o URL del
-  progetto). Il tool si rifiuta di partire con lo user-agent di esempio.
-- **`seeds`**: le URL di partenza.
-- **`deny_domains`**: domini da escludere sempre.
-- **`output.min_license_confidence`**: `null` per raccogliere tutto (con
-  etichetta di licenza), `"high"` per tenere solo contenuti con licenza
-  chiaramente identificata.
-- **`output.near_duplicate_threshold`**: soglia per la deduplica fuzzy
-  (default 8; vedi i commenti nel file).
-- **`output.use_ner`** / **`ner_model`**: attiva la redazione PII
-  avanzata (richiede spaCy, vedi sopra).
+Edit `config/sources.yaml`:
+- **`project.user_agent`**: put a real contact (email or project URL).
+  The tool refuses to start with the example placeholder user agent.
+- **`seeds`**: the starting URLs.
+- **`deny_domains`**: domains to always skip.
+- **`output.min_license_confidence`**: `null` to keep everything (with a
+  license label), `"high"` to keep only content with a clearly
+  identified license.
+- **`output.near_duplicate_threshold`**: fuzzy dedup threshold (default
+  8; see the comments in the file).
+- **`output.use_ner`** / **`ner_model`**: turn on advanced PII redaction
+  (requires spaCy, see above).
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
 ```
 
-Il dataset viene scritto come JSONL in `dataset/output.jsonl` (path
-configurabile). Ogni riga e' un record con questo schema:
+The dataset is written as JSONL to `dataset/output.jsonl` (path
+configurable). Each line is a record with this schema:
 
 ```json
 {
   "id": "uuid",
   "url": "https://...",
-  "domain": "esempio.com",
+  "domain": "example.com",
   "title": "...",
-  "text": "testo pulito, con PII redatta",
+  "text": "cleaned text, with PII redacted",
   "word_count": 123,
-  "content_hash": "sha256 del testo normalizzato",
+  "content_hash": "sha256 of the normalized text",
   "license": "CC BY-SA 4.0",
   "license_source": "rel_license_link",
   "license_confidence": "high",
@@ -128,86 +131,85 @@ configurabile). Ogni riga e' un record con questo schema:
 }
 ```
 
-### 2. Revisiona il dataset
+### 2. Review the dataset
 
 ```bash
 python main.py review --dataset dataset/output.jsonl
 ```
 
-Ti mostra un record alla volta (URL, licenza, redazioni PII, anteprima
-del testo) e chiede `[a]pprova / [r]ifiuta / [s]alta / [q]uit`. Le
-decisioni si salvano subito su disco: puoi interrompere e riprendere
-quando vuoi, i record gia' decisi non vengono riproposti. Risultato:
-`dataset/output_approved.jsonl` e `dataset/output_rejected.jsonl`.
+Shows you one record at a time (URL, license, PII redactions, text
+preview) and asks `[a]pprove / [r]eject / [s]kip / [q]uit`. Decisions
+are saved to disk immediately: you can stop and resume anytime, already
+decided records won't be shown again. Result:
+`dataset/output_approved.jsonl` and `dataset/output_rejected.jsonl`.
 
-### 3. (Opzionale) Fase 2 — fine-tuning
+### 3. (Optional) Phase 2 — fine-tuning
 
-Vedi `training/README.md`. In breve:
+See `training/README.md`. In short:
 
 ```bash
 python training/prepare_dataset.py --input dataset/output_approved.jsonl --output-dir training/data
 pip install -r training/requirements-training.txt
-cp training/config.example.yaml training/config.yaml   # personalizza base_model ecc.
-python training/train_lora.py --config training/config.yaml --check   # valida senza scaricare nulla
-python training/train_lora.py --config training/config.yaml           # training vero
+cp training/config.example.yaml training/config.yaml   # customize base_model etc.
+python training/train_lora.py --config training/config.yaml --check   # validate without downloading anything
+python training/train_lora.py --config training/config.yaml           # actual training
 ```
 
-## Checklist etica/legale prima di aggiungere una fonte
+## Ethical/legal checklist before adding a source
 
-Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
+Before adding a seed to `config/sources.yaml`, ask yourself:
 
-1. **Il sito lo permette?** Controlla `robots.txt` e i Termini di
-   Servizio del sito, non solo se `robots.txt` non blocca tecnicamente
-   la pagina.
-2. **Che licenza hanno i contenuti?** Se non e' chiara, considera di
-   impostare `min_license_confidence: "high"` per escludere
-   automaticamente quella fonte dal dataset finale, anche se viene
-   comunque scaricata per ispezione.
-3. **Ci sono dati personali?** I filtri automatici (regex + NER
-   opzionale) sono una prima difesa, non una garanzia. Su fonti ad alto
-   rischio (forum, social, commenti) usa sempre `main.py review` prima
-   di considerare i dati pronti per il training.
-4. **Il sito ha chiesto di non essere scrappato?** Se un gestore ti
-   contatta chiedendo l'esclusione, aggiungilo a `deny_domains` subito.
-5. **Serve davvero?** Preferisci fonti con licenza aperta esplicita
-   (Wikipedia, Project Gutenberg, dataset pubblici, repository open
-   source) quando l'obiettivo e' costruire un dataset riusabile e
-   redistribuibile.
+1. **Does the site allow it?** Check `robots.txt` and the site's Terms
+   of Service, not just whether `robots.txt` technically blocks the
+   page.
+2. **What license does the content have?** If it's unclear, consider
+   setting `min_license_confidence: "high"` to automatically exclude
+   that source from the final dataset, even if it's still fetched for
+   inspection.
+3. **Is there personal data?** The automatic filters (regex + optional
+   NER) are a first line of defense, not a guarantee. For higher-risk
+   sources (forums, social media, comments) always run `main.py review`
+   before treating the data as training-ready.
+4. **Has the site asked not to be scraped?** If an owner reaches out
+   asking to be excluded, add them to `deny_domains` right away.
+5. **Do you actually need it?** Prefer sources with an explicit open
+   license (Wikipedia, Project Gutenberg, public datasets, open source
+   repositories) when the goal is a reusable, redistributable dataset.
 
-## Test
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-35 test coprono la logica pura di scraper, pipeline, revisione e
-preparazione dati per il training — nessuno richiede rete o dipendenze
-pesanti (torch/spaCy non servono per farli passare, il codice degrada
-correttamente quando non sono installati).
+35 tests cover the pure logic of the scraper, pipeline, review, and
+training data prep — none require network access or heavy dependencies
+(torch/spaCy aren't needed for them to pass; the code degrades
+correctly when those aren't installed).
 
-Un run reale di scraping (`python main.py run --config ...`) richiede
-invece una connessione di rete in uscita verso i siti target: se lo
-lanci da un ambiente con egress ristretto, i fetch falliranno con errori
-di connessione anche se la logica e' corretta.
+An actual scraping run (`python main.py run --config ...`) does need
+outbound network access to the target sites: running it from an
+environment with restricted egress will produce connection errors even
+though the logic itself is correct.
 
-## Struttura del progetto
+## Project structure
 
 ```
 ScrapeLLM/
-├── scraper/            # fetch etico: robots.txt, rate limit, licenza
+├── scraper/            # ethical fetching: robots.txt, rate limit, license
 │   ├── robots.py
 │   ├── rate_limiter.py
 │   ├── license_detector.py
 │   ├── fetcher.py
 │   └── crawler.py
-├── pipeline/           # pulizia, PII, dedup, revisione, scrittura dataset
+├── pipeline/            # cleaning, PII, dedup, review, dataset writing
 │   ├── text_extractor.py
 │   ├── pii_filter.py
-│   ├── ner_pii.py       # PII avanzata via NER (opzionale, spaCy)
-│   ├── dedup.py          # hash esatto + SimHash per i quasi-duplicati
-│   ├── review.py         # revisione umana (stato persistito)
+│   ├── ner_pii.py        # advanced PII via NER (optional, spaCy)
+│   ├── dedup.py           # exact hash + SimHash for near-duplicates
+│   ├── review.py          # human review (persisted state)
 │   └── dataset_writer.py
-├── training/            # fase 2: fine-tuning LoRA (scaffold)
+├── training/             # phase 2: LoRA fine-tuning (scaffold)
 │   ├── prepare_dataset.py
 │   ├── train_lora.py
 │   ├── config.example.yaml
@@ -215,13 +217,13 @@ ScrapeLLM/
 │   └── README.md
 ├── config/
 │   └── sources.example.yaml
-├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 35 unit test, nessuna dipendenza pesante
-├── main.py              # CLI: run, review
+├── dataset/              # JSONL output (git-ignored)
+├── tests/                # 35 unit tests, no heavy dependencies
+├── main.py               # CLI: run, review
 ├── requirements.txt
-└── LICENSE              # MIT
+└── LICENSE                # MIT
 ```
 
-## Licenza del progetto
+## License
 
-MIT — vedi `LICENSE`.
+MIT — see `LICENSE`.
