@@ -63,15 +63,21 @@ Neither layer is an absolute guarantee, especially on higher-risk
 sources (forums, comments, user-generated content): those always need a
 human review pass (`main.py review`) before use.
 
+### Evaluation — is the model actually "aware"?
+
+`eval/` has 18 prompts across 6 categories (data provenance, consent,
+privacy, misuse resistance, transparency, bias/limitations) to run
+against a trained model and read the answers against a rubric — no
+automatic score, this is meant to be judged by a human. See
+`eval/README.md`.
+
 ## What it doesn't do yet (possible next steps)
 
-- An actual training run and evaluation of the resulting model (the
-  scaffold in `training/` is there, it needs validating on real
-  hardware).
+- An actual training run validated on real hardware, and an eval pass
+  using `eval/` against the result (the scaffolds are there and tested
+  in isolation, but not run together end-to-end).
 - An LSH index for large-scale fuzzy dedup (today it's an O(n) per-doc
   comparison, fine for datasets of thousands of pages, not millions).
-- A small set of evaluation prompts to probe the final model's "data
-  awareness" (see `training/README.md`).
 
 ## Installation
 
@@ -214,6 +220,10 @@ ScrapeLLM/
 │   ├── train_lora.py
 │   ├── config.example.yaml
 │   ├── requirements-training.txt
+│   └── README.md
+├── eval/                 # data-awareness evaluation prompts + runner
+│   ├── prompts.jsonl
+│   ├── run_eval.py
 │   └── README.md
 ├── config/
 │   └── sources.example.yaml

@@ -63,14 +63,21 @@ Nessuno dei due e' una garanzia assoluta, specialmente su fonti ad alto
 rischio (forum, commenti, contenuti generati dagli utenti): per quelle
 serve sempre una revisione umana (`main.py review`) prima dell'uso.
 
+### Valutazione — il modello e' davvero "consapevole"?
+
+`eval/` contiene 18 prompt su 6 categorie (provenienza dei dati,
+consenso, privacy, resistenza al misuso, trasparenza, bias/limiti) da
+lanciare contro un modello addestrato e da leggere a mano contro un
+rubric -- nessun punteggio automatico, e' pensato per un giudizio umano.
+Vedi `eval/README.md`.
+
 ## Cosa NON fa ancora (prossimi passi possibili)
 
-- Training effettivamente eseguito ed eval del modello risultante
-  (lo scaffold in `training/` c'e', va validato su hardware reale).
+- Un training vero validato su hardware reale, e un passaggio di eval
+  con `eval/` sul risultato (gli scaffold ci sono e sono testati in
+  isolamento, ma non ancora eseguiti insieme end-to-end).
 - Indice LSH per la deduplica fuzzy su larga scala (oggi confronto O(n)
   per documento, adatto a dataset di migliaia di pagine, non milioni).
-- Un piccolo set di prompt di valutazione sulla "consapevolezza" del
-  modello finale (vedi `training/README.md`).
 
 ## Installazione
 
@@ -214,6 +221,10 @@ ScrapeLLM/
 │   ├── train_lora.py
 │   ├── config.example.yaml
 │   ├── requirements-training.txt
+│   └── README.md
+├── eval/                # prompt di valutazione "consapevolezza" + runner
+│   ├── prompts.jsonl
+│   ├── run_eval.py
 │   └── README.md
 ├── config/
 │   └── sources.example.yaml
