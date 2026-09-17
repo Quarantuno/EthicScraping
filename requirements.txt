@@ -1,0 +1,20 @@
+# Networking & scraping
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+urllib3>=2.0
+
+# Config & CLI
+pyyaml>=6.0
+click>=8.1
+
+# Data handling
+pandas>=2.0
+
+# Rate limiting / politeness
+tldextract>=5.1
+
+# PII detection (lightweight regex-based, no heavy NLP deps required)
+# Optional, heavier NLP-based PII detection (uncomment if needed):
+# presidio-analyzer>=2.2
+# spacy>=3.7

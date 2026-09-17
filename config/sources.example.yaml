@@ -1,0 +1,35 @@
+# Configurazione di esempio per ScrapeLLM.
+# Copia questo file in config/sources.yaml e personalizzalo.
+# NON committare config/sources.yaml se contiene fonti private o interne.
+
+project:
+  name: "esempio-dataset"
+  # IMPORTANTE: identificati sempre onestamente. Un User-Agent anonimo o
+  # che finge di essere un browser e' una pratica scorretta verso i siti
+  # che visiti. Metti un contatto reale (email o URL del progetto).
+  user_agent: "ScrapeLLM-Bot/0.1 (+https://github.com/tuo-utente/ScrapeLLM; contatto: tuo-email@example.com)"
+
+output:
+  dataset_path: "dataset/output.jsonl"
+  min_word_count: 50
+  # null = tieni tutto (con etichetta di confidenza sulla licenza)
+  # "medium" o "high" = scarta le pagine la cui licenza non e' abbastanza chiara
+  min_license_confidence: null
+
+politeness:
+  default_delay_seconds: 2.0
+  timeout_seconds: 15
+
+# Domini da NON scrappare mai, indipendentemente da cosa dice robots.txt
+# (es. siti con dati sensibili, richieste esplicite di opt-out ricevute, ecc.)
+deny_domains: []
+
+crawl:
+  follow_links: false      # true = segue i link interni allo stesso dominio
+  max_pages_per_domain: 20 # tetto di sicurezza per seed, anche con follow_links attivo
+
+# URL di partenza. Con follow_links: false viene scaricata solo questa pagina
+# per ciascun seed; con follow_links: true, la crawl esplora lo stesso dominio.
+seeds:
+  - https://it.wikipedia.org/wiki/Intelligenza_artificiale
+  - https://it.wikipedia.org/wiki/Etica_dei_dati
