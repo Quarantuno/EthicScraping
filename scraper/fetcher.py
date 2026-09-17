@@ -1,4 +1,5 @@
-"""Single-page fetcher: robots-aware, rate-limited, license-aware.
+"""Single-page fetcher: robots-aware, rate-limited, license- and
+TDM-rights-aware.
 
 Every fetch either succeeds with full provenance metadata attached, or
 comes back with a clear reason it was skipped (blocked by robots.txt,
@@ -17,6 +18,7 @@ import requests
 from .robots import RobotsChecker
 from .rate_limiter import RateLimiter
 from .license_detector import detect_license
+from .tdm_rights import TdmRepChecker, combined_status as tdm_combined_status
 
 
 @dataclass
@@ -26,21 +28,29 @@ class FetchResult:
     html: Optional[str] = None
     status_code: Optional[int] = None
     license_info: Optional[dict] = None
+    tdm_reservation: Optional[dict] = None
     fetched_at: Optional[float] = None
     error: Optional[str] = None
 
 
 class EthicalFetcher:
     """Wraps requests.get with robots.txt + deny-list + rate-limit checks,
-    and attaches provenance/license metadata to every successful fetch."""
+    and attaches provenance/license/TDM-rights metadata to every
+    successful fetch."""
 
     def __init__(self, user_agent: str, deny_domains: Optional[list] = None,
-                 default_delay: float = 2.0, timeout: int = 15):
+                 default_delay: float = 2.0, timeout: int = 15,
+                 check_tdm_reservation: bool = True):
         self.user_agent = user_agent
         self.deny_domains = set(deny_domains or [])
         self.robots = RobotsChecker(user_agent=user_agent, timeout=timeout)
         self.rate_limiter = RateLimiter(default_delay=default_delay)
         self.timeout = timeout
+        # check_tdm_reservation gates the extra /.well-known/tdmrep.json
+        # request per domain (Art. 4(3) Directive 2019/790 opt-out
+        # signal); the free HTML meta-tag check always runs regardless.
+        self.tdm_checker = TdmRepChecker(user_agent=user_agent, timeout=timeout) \
+            if check_tdm_reservation else None
 
     def _is_denied(self, url: str) -> bool:
         domain = urlparse(url).netloc.lower()
@@ -73,11 +83,14 @@ class EthicalFetcher:
             )
 
         license_info = detect_license(resp.text, url)
+        tdm_reservation = tdm_combined_status(resp.text, url, self.tdm_checker)
+
         return FetchResult(
             url=url,
             status="ok",
             html=resp.text,
             status_code=resp.status_code,
             license_info=license_info,
+            tdm_reservation=tdm_reservation,
             fetched_at=time.time(),
         )

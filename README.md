@@ -71,6 +71,19 @@ against a trained model and read the answers against a rubric — no
 automatic score, this is meant to be judged by a human. See
 `eval/README.md`.
 
+## EU legal framework
+
+This pipeline's design choices (PII redaction, license detection,
+TDM opt-out handling, provenance tracking, human review) are grounded in
+specific GDPR, EU Copyright Directive, and AI Act provisions relevant to
+scraping data for AI training — not just generic "be ethical" advice.
+See **[COMPLIANCE.md](COMPLIANCE.md)** for the actual articles, what's
+automated, and what still needs a human (this is not legal advice).
+
+`compliance/generate_training_summary.py` also drafts the web-scraped-data
+part of the AI Act's mandatory training-data summary (Art. 53(1)(d)) from
+your dataset export.
+
 ## What it doesn't do yet (possible next steps)
 
 - An actual training run validated on real hardware, and an eval pass
@@ -131,6 +144,7 @@ configurable). Each line is a record with this schema:
   "license": "CC BY-SA 4.0",
   "license_source": "rel_license_link",
   "license_confidence": "high",
+  "tdm_reservation": false,
   "pii_redactions": {"EMAIL": 2},
   "fetched_at": 1234567890.0,
   "collected_at": 1234567890.0
@@ -181,6 +195,9 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 5. **Do you actually need it?** Prefer sources with an explicit open
    license (Wikipedia, Project Gutenberg, public datasets, open source
    repositories) when the goal is a reusable, redistributable dataset.
+6. **If you're in/targeting the EU:** see [COMPLIANCE.md](COMPLIANCE.md)
+   for how GDPR, the Copyright Directive's TDM exception, and the AI Act
+   bear on this specific step.
 
 ## Tests
 
@@ -206,6 +223,7 @@ ScrapeLLM/
 │   ├── robots.py
 │   ├── rate_limiter.py
 │   ├── license_detector.py
+│   ├── tdm_rights.py    # Art. 4(3) Directive 2019/790 opt-out detection (TDMRep)
 │   ├── fetcher.py
 │   └── crawler.py
 ├── pipeline/            # cleaning, PII, dedup, review, dataset writing
@@ -225,6 +243,9 @@ ScrapeLLM/
 │   ├── prompts.jsonl
 │   ├── run_eval.py
 │   └── README.md
+├── compliance/           # AI Act training-data-summary draft generator
+│   └── generate_training_summary.py
+├── COMPLIANCE.md          # GDPR / AI Act / Copyright Directive mapping (+ .it.md)
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)

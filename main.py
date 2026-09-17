@@ -78,6 +78,7 @@ def run(config_path: str, verbose: bool):
         deny_domains=deny_domains,
         default_delay=politeness_cfg.get("default_delay_seconds", 2.0),
         timeout=politeness_cfg.get("timeout_seconds", 15),
+        check_tdm_reservation=output_cfg.get("respect_tdm_optout", True),
     )
     crawler = Crawler(
         fetcher=fetcher,
@@ -91,6 +92,7 @@ def run(config_path: str, verbose: bool):
         near_duplicate_threshold=output_cfg.get("near_duplicate_threshold", 8),
         use_ner=output_cfg.get("use_ner", False),
         ner_model=output_cfg.get("ner_model", "it_core_news_sm"),
+        respect_tdm_optout=output_cfg.get("respect_tdm_optout", True),
     )
 
     logger.info("Avvio scraping di %d seed -> %s", len(seeds), writer.output_path)

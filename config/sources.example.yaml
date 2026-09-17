@@ -27,6 +27,13 @@ output:
   # viene semplicemente ignorato con un avviso nei log.
   use_ner: false
   ner_model: "it_core_news_sm"
+  # Rispetta le riserve di diritti per text-and-data-mining (art. 4(3)
+  # Direttiva (UE) 2019/790), rilevate via TDMRep (meta tag + file
+  # /.well-known/tdmrep.json). Se true (default), scarta le pagine con
+  # diritti riservati a meno che non abbiano gia' una licenza permissiva
+  # chiaramente identificata (license_confidence: "high"). Vedi
+  # COMPLIANCE.md.
+  respect_tdm_optout: true
 
 politeness:
   default_delay_seconds: 2.0

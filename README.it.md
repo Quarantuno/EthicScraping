@@ -71,6 +71,22 @@ lanciare contro un modello addestrato e da leggere a mano contro un
 rubric -- nessun punteggio automatico, e' pensato per un giudizio umano.
 Vedi `eval/README.md`.
 
+## Quadro normativo UE
+
+Le scelte di design di questa pipeline (redazione PII, rilevamento
+licenza, gestione opt-out TDM, tracciamento provenienza, revisione
+umana) sono ancorate a specifiche disposizioni di GDPR, Direttiva
+Copyright UE e AI Act rilevanti per lo scraping di dati per
+l'addestramento di AI — non solo un generico "sii etico". Vedi
+**[COMPLIANCE.it.md](COMPLIANCE.it.md)** per gli articoli veri e propri,
+cosa e' automatizzato e cosa richiede ancora un umano (questo non e'
+consulenza legale).
+
+`compliance/generate_training_summary.py` compila anche la parte sui
+dati scrappati dal web del riepilogo obbligatorio dei dati di training
+richiesto dall'AI Act (art. 53(1)(d)) a partire dal tuo export del
+dataset.
+
 ## Cosa NON fa ancora (prossimi passi possibili)
 
 - Un training vero validato su hardware reale, e un passaggio di eval
@@ -131,6 +147,7 @@ configurabile). Ogni riga e' un record con questo schema:
   "license": "CC BY-SA 4.0",
   "license_source": "rel_license_link",
   "license_confidence": "high",
+  "tdm_reservation": false,
   "pii_redactions": {"EMAIL": 2},
   "fetched_at": 1234567890.0,
   "collected_at": 1234567890.0
@@ -182,6 +199,10 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
    (Wikipedia, Project Gutenberg, dataset pubblici, repository open
    source) quando l'obiettivo e' costruire un dataset riusabile e
    redistribuibile.
+6. **Se sei nell'UE o ti rivolgi a utenti UE:** vedi
+   [COMPLIANCE.it.md](COMPLIANCE.it.md) per come GDPR, l'eccezione TDM
+   della Direttiva Copyright e l'AI Act si applicano a questo passaggio
+   specifico.
 
 ## Test
 
@@ -207,6 +228,7 @@ ScrapeLLM/
 │   ├── robots.py
 │   ├── rate_limiter.py
 │   ├── license_detector.py
+│   ├── tdm_rights.py    # rilevamento opt-out art. 4(3) Direttiva 2019/790 (TDMRep)
 │   ├── fetcher.py
 │   └── crawler.py
 ├── pipeline/           # pulizia, PII, dedup, revisione, scrittura dataset
@@ -226,6 +248,9 @@ ScrapeLLM/
 │   ├── prompts.jsonl
 │   ├── run_eval.py
 │   └── README.md
+├── compliance/           # generatore bozza riepilogo dati per AI Act
+│   └── generate_training_summary.py
+├── COMPLIANCE.md          # mappatura GDPR / AI Act / Direttiva Copyright (+ .it.md)
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)

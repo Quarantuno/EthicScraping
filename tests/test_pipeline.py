@@ -218,6 +218,49 @@ class TestDatasetWriter(unittest.TestCase):
         self.assertIsNone(writer.process(self._fake_result()))
         self.assertEqual(writer.stats["skipped_too_short"], 1)
 
+    def _unlicensed_result(self, url="https://sito-senza-licenza.it/pagina", tdm_reserved=False):
+        html = SAMPLE_HTML.replace(
+            '<link rel="license" href="https://creativecommons.org/licenses/by-sa/4.0/">', ""
+        )
+        return FetchResult(
+            url=url,
+            status="ok",
+            html=html,
+            license_info=detect_license(html, url),
+            tdm_reservation={"reserved": tdm_reserved, "policy_url": None,
+                              "source": "meta_tag" if tdm_reserved else None},
+        )
+
+    def test_drops_unlicensed_page_with_tdm_reservation(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        self.assertIsNone(writer.process(self._unlicensed_result(tdm_reserved=True)))
+        self.assertEqual(writer.stats["skipped_tdm_reservation"], 1)
+
+    def test_keeps_unlicensed_page_without_tdm_reservation(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        self.assertIsNotNone(writer.process(self._unlicensed_result(tdm_reserved=False)))
+        self.assertEqual(writer.stats["skipped_tdm_reservation"], 0)
+
+    def test_permissive_license_overrides_tdm_reservation(self):
+        # SAMPLE_HTML has a CC BY-SA rel=license link (confidence "high"):
+        # an explicit permissive license already grants the needed
+        # permission independently of the Art. 4(3) TDM exception.
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        result = self._fake_result()
+        result.tdm_reservation = {"reserved": True, "policy_url": None, "source": "meta_tag"}
+        self.assertIsNotNone(writer.process(result))
+        self.assertEqual(writer.stats["skipped_tdm_reservation"], 0)
+
+    def test_respect_tdm_optout_false_disables_the_check(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10, respect_tdm_optout=False)
+        self.assertIsNotNone(writer.process(self._unlicensed_result(tdm_reserved=True)))
+        self.assertEqual(writer.stats["skipped_tdm_reservation"], 0)
+
+    def test_record_carries_tdm_reservation_flag(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        record = writer.process(self._unlicensed_result("https://altro-sito.it/p", tdm_reserved=False))
+        self.assertEqual(record["tdm_reservation"], False)
+
 
 if __name__ == "__main__":
     unittest.main()
