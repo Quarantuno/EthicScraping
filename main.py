@@ -13,7 +13,9 @@ sulla licenza -- vedi README.md per la checklist etica completa.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import sys
 
 import click
@@ -21,13 +23,22 @@ import yaml
 
 from scraper.fetcher import EthicalFetcher
 from scraper.crawler import Crawler
+from scraper.crawl_state import CrawlState
 from pipeline.dataset_writer import DatasetWriter
 from pipeline.review import ReviewSession
+from pipeline.dataset_stats import compute_stats, render_text as render_stats_text
 
 
 def load_config(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _default_state_path(dataset_path: str) -> str:
+    """Derives a crawl-state path alongside the dataset, e.g.
+    'dataset/output.jsonl' -> 'dataset/output.crawl_state.json'."""
+    base, _ext = os.path.splitext(dataset_path)
+    return f"{base}.crawl_state.json"
 
 
 def setup_logging(verbose: bool) -> None:
@@ -47,7 +58,9 @@ def cli():
 @cli.command()
 @click.option("--config", "config_path", required=True, help="Percorso al file YAML di configurazione")
 @click.option("--verbose", is_flag=True, help="Log dettagliati")
-def run(config_path: str, verbose: bool):
+@click.option("--reset-state", is_flag=True,
+              help="Ignora lo stato di crawling salvato in precedenza e riparti da zero")
+def run(config_path: str, verbose: bool, reset_state: bool):
     """Esegue scraping + pipeline secondo il file di configurazione."""
     setup_logging(verbose)
     logger = logging.getLogger("scrapellm.cli")
@@ -79,12 +92,23 @@ def run(config_path: str, verbose: bool):
         default_delay=politeness_cfg.get("default_delay_seconds", 2.0),
         timeout=politeness_cfg.get("timeout_seconds", 15),
         check_tdm_reservation=output_cfg.get("respect_tdm_optout", True),
+        max_retries=politeness_cfg.get("max_retries", 2),
+        backoff_seconds=politeness_cfg.get("backoff_seconds", 2.0),
     )
     crawler = Crawler(
         fetcher=fetcher,
         max_pages_per_domain=crawl_cfg.get("max_pages_per_domain", 20),
         follow_links=crawl_cfg.get("follow_links", False),
     )
+
+    if "state_path" in crawl_cfg:
+        state_path = crawl_cfg["state_path"] or None
+    else:
+        state_path = _default_state_path(output_cfg.get("dataset_path", "dataset/output.jsonl"))
+    if reset_state and state_path and os.path.exists(state_path):
+        os.remove(state_path)
+        logger.info("Stato di crawling resettato (rimosso %s).", state_path)
+    crawl_state = CrawlState(state_path)
     writer = DatasetWriter(
         output_path=output_cfg.get("dataset_path", "dataset/output.jsonl"),
         min_license_confidence=output_cfg.get("min_license_confidence"),
@@ -99,7 +123,7 @@ def run(config_path: str, verbose: bool):
 
     for seed in seeds:
         logger.info("Seed: %s", seed)
-        for result in crawler.crawl_seed(seed):
+        for result in crawler.crawl_seed(seed, state=crawl_state):
             if result.status == "ok":
                 record = writer.process(result)
                 if record:
@@ -115,6 +139,11 @@ def run(config_path: str, verbose: bool):
                                 f": {result.error}" if result.error else "")
 
     logger.info("Fine. Statistiche: %s", writer.stats)
+    if crawl_state.state_path:
+        logger.info(
+            "Stato di crawling salvato in %s (%d URL totali visitati finora).",
+            crawl_state.state_path, len(crawl_state.visited),
+        )
 
 
 @cli.command()
@@ -168,6 +197,31 @@ def review(dataset_path: str, limit: int, preview_chars: int):
     click.echo(f"Fine sessione. Statistiche: {session.stats()}")
     click.echo(f"Approvati -> {session.approved_path}")
     click.echo(f"Rifiutati -> {session.rejected_path}")
+
+
+@cli.command()
+@click.option("--dataset", "dataset_path", required=True, help="Percorso al file JSONL da analizzare")
+@click.option("--top-domains", type=int, default=10, help="Quanti domini principali mostrare")
+@click.option("--top-percent", type=float, default=10.0,
+              help="Percentuale di domini principali da considerare 'top' (10 default, 5 se SME)")
+def stats(dataset_path: str, top_domains: int, top_percent: float):
+    """Statistiche rapide su un dataset JSONL gia' prodotto: numero di
+    record, distribuzione delle parole, domini principali, licenze,
+    PII redatte e reservation TDM residue.
+    """
+    records = []
+    with open(dataset_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+
+    if not records:
+        click.echo(f"Nessun record trovato in {dataset_path}.")
+        return
+
+    result = compute_stats(records, top_percent=top_percent)
+    click.echo(render_stats_text(result, top_n_domains=top_domains))
 
 
 if __name__ == "__main__":

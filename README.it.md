@@ -18,7 +18,14 @@ raccolta e revisione, non solo nel prompt del modello finale.
 - **Scraper etico** (`scraper/`): rispetta sempre `robots.txt`, applica
   rate limiting per dominio (default 2s, o il `crawl-delay` del sito se
   maggiore), supporta una deny-list di domini da escludere sempre, e usa
-  un User-Agent onesto e identificabile (niente finti browser).
+  un User-Agent onesto e identificabile (niente finti browser). Errori
+  di rete transitori e risposte 5xx vengono ritentati con backoff
+  esponenziale (mai su 4xx o blocchi robots/deny-list); le risposte non
+  HTML (PDF, immagini, JSON, ...) vengono scartate in base al
+  `Content-Type` prima di tentare qualsiasi parsing. Una crawl puo'
+  essere interrotta e ripresa in seguito senza riscaricare le pagine
+  gia' visitate (`scraper/crawl_state.py`, `main.py run --reset-state`
+  per ripartire da zero).
 - **Rilevamento licenza** (`scraper/license_detector.py`): tenta di
   individuare la licenza di ogni pagina (link/meta `rel="license"`,
   pattern Creative Commons, domini noti come Wikipedia/Gutenberg). Se non
@@ -34,8 +41,11 @@ raccolta e revisione, non solo nel prompt del modello finale.
   scorre il dataset prodotto e fa approvare/rifiutare ogni record a
   occhio umano, salvando lo stato cosi' da poter interrompere e
   riprendere. Produce `*_approved.jsonl` e `*_rejected.jsonl`.
-- **CLI** (`main.py`): comandi `run` (scraping + pipeline) e `review`
-  (revisione umana), entrambi guidati da config YAML/opzioni.
+- **CLI** (`main.py`): comandi `run` (scraping + pipeline), `review`
+  (revisione umana) e `stats` (numero di record, distribuzione delle
+  parole, domini principali, mix di licenze, PII redatte, reservation
+  TDM residue di un dataset gia' prodotto), guidati da config
+  YAML/opzioni.
 
 ### Fase 2 — Fine-tuning (scaffold, non ancora eseguito end-to-end)
 
@@ -132,6 +142,20 @@ Modifica `config/sources.yaml`:
 python main.py run --config config/sources.yaml --verbose
 ```
 
+Run interrotto a meta'? Basta rilanciare lo stesso comando: le pagine
+gia' scaricate (con successo, bloccate da robots, in deny-list, o con
+content-type sbagliato) vengono saltate automaticamente, tracciate in un
+file `*.crawl_state.json` accanto al dataset. Passa `--reset-state` per
+ignorarlo e ripartire da zero.
+
+```bash
+python main.py stats --dataset dataset/output.jsonl
+```
+
+Riepilogo rapido di un dataset gia' prodotto: numero di record,
+distribuzione delle parole, domini principali, mix di licenze, PII
+redatte, e quanti record portano ancora una reservation TDM.
+
 Il dataset viene scritto come JSONL in `dataset/output.jsonl` (path
 configurabile). Ogni riga e' un record con questo schema:
 
@@ -210,10 +234,11 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-35 test coprono la logica pura di scraper, pipeline, revisione e
-preparazione dati per il training — nessuno richiede rete o dipendenze
-pesanti (torch/spaCy non servono per farli passare, il codice degrada
-correttamente quando non sono installati).
+86 test coprono la logica pura di scraper (incluso retry/backoff e
+filtro Content-Type, con `requests.get` mockato), pipeline, ripresa
+della crawl, revisione e preparazione dati per il training — nessuno
+richiede rete o dipendenze pesanti (torch/spaCy non servono per farli
+passare, il codice degrada correttamente quando non sono installati).
 
 Un run reale di scraping (`python main.py run --config ...`) richiede
 invece una connessione di rete in uscita verso i siti target: se lo
@@ -229,7 +254,8 @@ ScrapeLLM/
 │   ├── rate_limiter.py
 │   ├── license_detector.py
 │   ├── tdm_rights.py    # rilevamento opt-out art. 4(3) Direttiva 2019/790 (TDMRep)
-│   ├── fetcher.py
+│   ├── fetcher.py        # retry con backoff + filtro Content-Type
+│   ├── crawl_state.py    # crawling ripristinabile (stato URL visitati persistito)
 │   └── crawler.py
 ├── pipeline/           # pulizia, PII, dedup, revisione, scrittura dataset
 │   ├── text_extractor.py
@@ -237,6 +263,7 @@ ScrapeLLM/
 │   ├── ner_pii.py       # PII avanzata via NER (opzionale, spaCy)
 │   ├── dedup.py          # hash esatto + SimHash per i quasi-duplicati
 │   ├── review.py         # revisione umana (stato persistito)
+│   ├── dataset_stats.py  # statistiche riepilogo per `main.py stats`
 │   └── dataset_writer.py
 ├── training/            # fase 2: fine-tuning LoRA (scaffold)
 │   ├── prepare_dataset.py
@@ -254,8 +281,8 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 35 unit test, nessuna dipendenza pesante
-├── main.py              # CLI: run, review
+├── tests/               # 86 unit test, nessuna dipendenza pesante
+├── main.py              # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE              # MIT
 ```

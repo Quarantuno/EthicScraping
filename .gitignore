@@ -11,3 +11,5 @@ training/output/
 training/config.yaml
 config/sources.yaml
 eval/results.jsonl
+.idea/
+*.crawl_state.json

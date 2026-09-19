@@ -8,11 +8,12 @@ decisions were actually made about.
 from __future__ import annotations
 
 import logging
-from typing import Iterator, Set, List
+from typing import Iterator, Optional, Set, List
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from .crawl_state import CrawlState
 from .fetcher import EthicalFetcher, FetchResult
 
 logger = logging.getLogger("scrapellm.crawler")
@@ -35,8 +36,14 @@ class Crawler:
                 links.append(absolute.split("#")[0])
         return links
 
-    def crawl_seed(self, seed_url: str) -> Iterator[FetchResult]:
-        """Yields a FetchResult per visited page for this seed."""
+    def crawl_seed(self, seed_url: str, state: Optional[CrawlState] = None) -> Iterator[FetchResult]:
+        """Yields a FetchResult per newly-visited page for this seed.
+
+        If `state` is given, URLs it already marks as visited (from a
+        previous run) are skipped entirely -- not fetched, not yielded --
+        so a run can be stopped and resumed later without re-hitting
+        pages it already collected. See scraper/crawl_state.py.
+        """
         visited: Set[str] = set()
         queue = [seed_url]
         domain = urlparse(seed_url).netloc
@@ -48,9 +55,16 @@ class Crawler:
                 continue
             visited.add(url)
 
+            if state and state.is_visited(url):
+                logger.debug("Salto %s: gia' visitato in una run precedente.", url)
+                continue
+
             result = self.fetcher.fetch(url)
             yield result
             count += 1
+
+            if state and result.status != "error":
+                state.mark_visited(url)
 
             if result.status != "ok":
                 logger.info("Skipped %s: %s", url, result.status)

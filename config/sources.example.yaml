@@ -38,6 +38,11 @@ output:
 politeness:
   default_delay_seconds: 2.0
   timeout_seconds: 15
+  # Errori di rete e risposte 5xx transitorie vengono ritentati con
+  # backoff esponenziale (max_retries=2 -> 3 tentativi totali, attese di
+  # ~2s, poi ~4s). Non si ritenta mai su 4xx, robots.txt o deny-list.
+  max_retries: 2
+  backoff_seconds: 2.0
 
 # Domini da NON scrappare mai, indipendentemente da cosa dice robots.txt
 # (es. siti con dati sensibili, richieste esplicite di opt-out ricevute, ecc.)
@@ -46,6 +51,13 @@ deny_domains: []
 crawl:
   follow_links: false      # true = segue i link interni allo stesso dominio
   max_pages_per_domain: 20 # tetto di sicurezza per seed, anche con follow_links attivo
+  # Percorso dello stato di crawling (URL gia' visitati), per poter
+  # interrompere una run e riprenderla in seguito senza riscaricare le
+  # stesse pagine. Di default deriva da output.dataset_path (es.
+  # "dataset/output.jsonl" -> "dataset/output.crawl_state.json").
+  # Imposta a null/false per disattivare la persistenza dello stato.
+  # `python main.py run --reset-state` ignora e cancella lo stato salvato.
+  # state_path: "dataset/output.crawl_state.json"
 
 # URL di partenza. Con follow_links: false viene scaricata solo questa pagina
 # per ciascun seed; con follow_links: true, la crawl esplora lo stesso dominio.

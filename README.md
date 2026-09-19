@@ -18,7 +18,13 @@ review pipeline — not just into the final model's prompt.
 - **Ethical scraper** (`scraper/`): always honors `robots.txt`, applies
   per-domain rate limiting (2s default, or the site's own `crawl-delay`
   if higher), supports a deny-list of domains to always skip, and uses
-  an honest, identifiable User-Agent (no fake browsers).
+  an honest, identifiable User-Agent (no fake browsers). Transient
+  network errors and 5xx responses are retried with exponential
+  backoff (never 4xx or a robots/deny-list block); non-HTML responses
+  (PDFs, images, JSON, ...) are discarded by `Content-Type` before any
+  parsing is attempted. A crawl can be interrupted and resumed later
+  without re-fetching pages it already visited (`scraper/crawl_state.py`,
+  `main.py run --reset-state` to start over).
 - **License detection** (`scraper/license_detector.py`): best-effort
   detection of each page's license (`rel="license"` link/meta tag,
   Creative Commons patterns, known domains like Wikipedia/Gutenberg). If
@@ -34,8 +40,10 @@ review pipeline — not just into the final model's prompt.
   walks through the produced dataset and has a human approve/reject
   each record, saving progress so you can stop and resume. Produces
   `*_approved.jsonl` and `*_rejected.jsonl`.
-- **CLI** (`main.py`): `run` (scraping + pipeline) and `review` (human
-  review) commands, both driven by YAML config / options.
+- **CLI** (`main.py`): `run` (scraping + pipeline), `review` (human
+  review), and `stats` (record count, word-count distribution, top
+  domains, license mix, PII redaction totals, residual TDM reservations
+  for an existing dataset) commands, driven by YAML config / options.
 
 ### Phase 2 — Fine-tuning (scaffold, not yet run end-to-end)
 
@@ -129,6 +137,20 @@ Edit `config/sources.yaml`:
 python main.py run --config config/sources.yaml --verbose
 ```
 
+Interrupted mid-run? Just run the same command again: pages already
+fetched (successfully or not, robots-blocked, deny-listed, or wrong
+content type) are skipped automatically, tracked in a
+`*.crawl_state.json` file next to the dataset. Pass `--reset-state` to
+ignore it and start over.
+
+```bash
+python main.py stats --dataset dataset/output.jsonl
+```
+
+Quick summary of a dataset already produced: record count, word-count
+distribution, top domains, license mix, PII redaction totals, and how
+many records still carry a TDM reservation flag.
+
 The dataset is written as JSONL to `dataset/output.jsonl` (path
 configurable). Each line is a record with this schema:
 
@@ -205,10 +227,12 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-35 tests cover the pure logic of the scraper, pipeline, review, and
-training data prep — none require network access or heavy dependencies
-(torch/spaCy aren't needed for them to pass; the code degrades
-correctly when those aren't installed).
+86 tests cover the pure logic of the scraper (including retry/backoff
+and Content-Type filtering, with `requests.get` mocked), pipeline,
+crawl resumability, review, and training data prep — none require
+network access or heavy dependencies (torch/spaCy aren't needed for
+them to pass; the code degrades correctly when those aren't
+installed).
 
 An actual scraping run (`python main.py run --config ...`) does need
 outbound network access to the target sites: running it from an
@@ -224,7 +248,8 @@ ScrapeLLM/
 │   ├── rate_limiter.py
 │   ├── license_detector.py
 │   ├── tdm_rights.py    # Art. 4(3) Directive 2019/790 opt-out detection (TDMRep)
-│   ├── fetcher.py
+│   ├── fetcher.py        # retry-with-backoff + Content-Type filtering
+│   ├── crawl_state.py    # resumable crawling (persisted visited-URL state)
 │   └── crawler.py
 ├── pipeline/            # cleaning, PII, dedup, review, dataset writing
 │   ├── text_extractor.py
@@ -232,6 +257,7 @@ ScrapeLLM/
 │   ├── ner_pii.py        # advanced PII via NER (optional, spaCy)
 │   ├── dedup.py           # exact hash + SimHash for near-duplicates
 │   ├── review.py          # human review (persisted state)
+│   ├── dataset_stats.py   # summary stats for `main.py stats`
 │   └── dataset_writer.py
 ├── training/             # phase 2: LoRA fine-tuning (scaffold)
 │   ├── prepare_dataset.py
@@ -249,8 +275,8 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 35 unit tests, no heavy dependencies
-├── main.py               # CLI: run, review
+├── tests/                # 86 unit tests, no heavy dependencies
+├── main.py               # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE                # MIT
 ```
