@@ -117,6 +117,12 @@ def run(config_path: str, verbose: bool, reset_state: bool):
         use_ner=output_cfg.get("use_ner", False),
         ner_model=output_cfg.get("ner_model", "it_core_news_sm"),
         respect_tdm_optout=output_cfg.get("respect_tdm_optout", True),
+        use_quality_filter=output_cfg.get("use_quality_filter", True),
+        min_alpha_ratio=output_cfg.get("min_alpha_ratio", 0.5),
+        min_unique_line_ratio=output_cfg.get("min_unique_line_ratio", 0.4),
+        max_long_word_ratio=output_cfg.get("max_long_word_ratio", 0.05),
+        use_language_filter=output_cfg.get("use_language_filter", False),
+        allowed_languages=output_cfg.get("allowed_languages"),
     )
 
     logger.info("Avvio scraping di %d seed -> %s", len(seeds), writer.output_path)
@@ -178,7 +184,9 @@ def review(dataset_path: str, limit: int, preview_chars: int):
         click.echo(f"Licenza: {record.get('license')} "
                    f"(confidenza: {record.get('license_confidence')})")
         click.echo(f"Parole: {record.get('word_count')}  "
-                   f"PII redatte: {record.get('pii_redactions') or 'nessuna'}")
+                   f"Lingua: {record.get('language') or 'sconosciuta'}  "
+                   f"Qualita': {record.get('quality_score', 'n/d')}")
+        click.echo(f"PII redatte: {record.get('pii_redactions') or 'nessuna'}")
         text = record.get("text", "")
         click.echo(f"\n{text[:preview_chars]}"
                    f"{'...' if len(text) > preview_chars else ''}\n")

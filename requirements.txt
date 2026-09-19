@@ -20,3 +20,9 @@ tldextract>=5.1
 #   pip install spacy
 #   python -m spacy download it_core_news_sm
 # spacy>=3.7
+
+# Optional: language detection for output.use_language_filter in
+# config/sources.yaml. Senza questa dipendenza il campo "language" resta
+# null e nessun filtro viene applicato (degrado morbido, nessun errore).
+#   pip install langdetect
+# langdetect>=1.0.9

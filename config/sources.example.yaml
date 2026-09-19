@@ -34,6 +34,23 @@ output:
   # chiaramente identificata (license_confidence: "high"). Vedi
   # COMPLIANCE.md.
   respect_tdm_optout: true
+  # Filtro qualita' del testo: euristiche leggere, nessuna dipendenza
+  # esterna (rapporto caratteri alfabetici, righe duplicate/boilerplate,
+  # "parole" anomale molto lunghe come URL/base64/codice minificato). Se
+  # true (default), scarta le pagine che non superano le soglie minime.
+  # Ogni record scritto porta comunque un campo quality_score (0-1),
+  # anche solo a scopo informativo -- vedi `main.py stats`.
+  use_quality_filter: true
+  min_alpha_ratio: 0.5
+  min_unique_line_ratio: 0.4
+  max_long_word_ratio: 0.05
+  # Rilevamento lingua (richiede: pip install langdetect). Se non
+  # installato, il campo "language" resta null per ogni record e nessun
+  # filtro viene applicato, con un avviso nei log. Se use_language_filter
+  # e' true, le pagine la cui lingua rilevata non e' in allowed_languages
+  # vengono scartate.
+  use_language_filter: false
+  allowed_languages: ["it", "en"]
 
 politeness:
   default_delay_seconds: 2.0

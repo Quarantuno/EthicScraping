@@ -31,19 +31,24 @@ raccolta e revisione, non solo nel prompt del modello finale.
   pattern Creative Commons, domini noti come Wikipedia/Gutenberg). Se non
   trova nulla, la pagina viene etichettata come licenza "unknown" — mai
   assunta open di default.
-- **Pipeline dati** (`pipeline/`): pulisce l'HTML in testo, **redige i
-  dati personali** (email, telefoni, IBAN, IP, numeri tipo carta di
+- **Pipeline dati** (`pipeline/`): pulisce l'HTML in testo, filtra il
+  testo di bassa qualita' (per lo piu' boilerplate/righe ripetute,
+  codifica rovinata, "parole" assurdamente lunghe) con euristiche senza
+  dipendenze esterne, opzionalmente filtra per lingua rilevata, **redige
+  i dati personali** (email, telefoni, IBAN, IP, numeri tipo carta di
   credito via regex; opzionalmente anche nomi propri e luoghi via NER,
   vedi sotto), deduplica i contenuti (sia hash esatto sia quasi-duplicati
   via SimHash), e scrive ogni record in JSONL con provenienza completa
-  (URL, dominio, licenza, timestamp di raccolta).
+  (URL, dominio, licenza, lingua, punteggio di qualita', timestamp di
+  raccolta).
 - **Revisione umana** (`pipeline/review.py`, comando `main.py review`):
   scorre il dataset prodotto e fa approvare/rifiutare ogni record a
   occhio umano, salvando lo stato cosi' da poter interrompere e
   riprendere. Produce `*_approved.jsonl` e `*_rejected.jsonl`.
 - **CLI** (`main.py`): comandi `run` (scraping + pipeline), `review`
   (revisione umana) e `stats` (numero di record, distribuzione delle
-  parole, domini principali, mix di licenze, PII redatte, reservation
+  parole e della qualita' del testo, domini principali, concentrazione
+  dei domini, mix di lingue, mix di licenze, PII redatte, reservation
   TDM residue di un dataset gia' prodotto), guidati da config
   YAML/opzioni.
 
@@ -172,11 +177,21 @@ configurabile). Ogni riga e' un record con questo schema:
   "license_source": "rel_license_link",
   "license_confidence": "high",
   "tdm_reservation": false,
+  "language": "it",
+  "quality_score": 0.87,
   "pii_redactions": {"EMAIL": 2},
   "fetched_at": 1234567890.0,
   "collected_at": 1234567890.0
 }
 ```
+
+`language` e' `null` a meno che non sia installato il pacchetto
+opzionale `langdetect` (vedi `requirements.txt`) -- senza, non viene
+applicato nemmeno alcun filtro lingua, solo un `null` informativo.
+`quality_score` (0-1, piu' alto e' meglio) viene sempre calcolato con
+euristiche senza dipendenze esterne (`pipeline/quality_filter.py`), a
+prescindere dal fatto che `output.use_quality_filter` scarti o meno le
+pagine con punteggio basso.
 
 ### 2. Revisiona il dataset
 
@@ -234,11 +249,13 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-86 test coprono la logica pura di scraper (incluso retry/backoff e
-filtro Content-Type, con `requests.get` mockato), pipeline, ripresa
-della crawl, revisione e preparazione dati per il training — nessuno
-richiede rete o dipendenze pesanti (torch/spaCy non servono per farli
-passare, il codice degrada correttamente quando non sono installati).
+116 test coprono la logica pura di scraper (incluso retry/backoff e
+filtro Content-Type, con `requests.get` mockato), pipeline (incluse le
+euristiche di qualita' del testo e il degrado del rilevamento lingua),
+ripresa della crawl, revisione e preparazione dati per il training —
+nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect non
+servono per farli passare, il codice degrada correttamente quando non
+sono installati).
 
 Un run reale di scraping (`python main.py run --config ...`) richiede
 invece una connessione di rete in uscita verso i siti target: se lo
@@ -263,6 +280,8 @@ ScrapeLLM/
 │   ├── ner_pii.py       # PII avanzata via NER (opzionale, spaCy)
 │   ├── dedup.py          # hash esatto + SimHash per i quasi-duplicati
 │   ├── review.py         # revisione umana (stato persistito)
+│   ├── quality_filter.py # euristiche di qualita' del testo, senza dipendenze
+│   ├── language_detector.py # rilevamento lingua opzionale (langdetect)
 │   ├── dataset_stats.py  # statistiche riepilogo per `main.py stats`
 │   └── dataset_writer.py
 ├── training/            # fase 2: fine-tuning LoRA (scaffold)
@@ -281,7 +300,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 86 unit test, nessuna dipendenza pesante
+├── tests/               # 116 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE              # MIT
