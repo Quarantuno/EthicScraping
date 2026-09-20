@@ -30,6 +30,30 @@ class TestEmailAndIbanAndIpv4(unittest.TestCase):
 
 
 class TestPhoneNumbers(unittest.TestCase):
+    def test_does_not_redact_doi_with_journal_path_between_keyword_and_number(self):
+        # Real DOIs have the journal/article path between "DOI" and the
+        # actual number, e.g. "DOI: 10.1016/j.patter.2024.101074" -- a
+        # citation-context check anchored immediately before the match
+        # misses this; it must search further back.
+        text = ("in Patterns, vol. 5, n. 11, 8 novembre 2024, p. 101074, "
+                "DOI: 10.1016/j.patter.2024.101074. URL consultato il 10 gennaio")
+        redacted, counts = redact_pii(text)
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts["PHONE"], 0)
+
+    def test_does_not_redact_wikipedia_permalink_oldid(self):
+        text = ('Recuperato da "https://it.wikipedia.org/w/index.php?'
+                'title=Etica_dei_dati&oldid=123456789"')
+        redacted, counts = redact_pii(text)
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts["PHONE"], 0)
+
+    def test_does_not_redact_ad_tracking_url_parameter(self):
+        text = "locale=en-it&gad_source=1&gad_campaignid=987654321&gclid=abc123"
+        redacted, counts = redact_pii(text)
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts["PHONE"], 0)
+
     def test_redacts_local_style_phone_number(self):
         redacted, counts = redact_pii("Chiamami al 333-1234567 per informazioni.")
         self.assertIn("[REDACTED_PHONE]", redacted)
@@ -63,6 +87,23 @@ class TestPhoneNumbers(unittest.TestCase):
 
 
 class TestCreditCardNumbers(unittest.TestCase):
+    def test_does_not_redact_isbn_with_dash_prefix_before_keyword_reach(self):
+        # ISBN starts with a literal "978-" prefix; a naive check could
+        # accidentally treat that dash as a word boundary and start
+        # matching right after it, "losing" the ISBN keyword that's
+        # further back. Must still be caught.
+        text = ("First trade paperback edition, PublicAffairs, 2020, "
+                "ISBN 978-1541618619-4.")
+        redacted, counts = redact_pii(text)
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts["CREDIT_CARD"], 0)
+
+    def test_does_not_redact_url_parameter_value(self):
+        text = "tracking: campaignid=1234567890123&other=x"
+        redacted, counts = redact_pii(text)
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts["CREDIT_CARD"], 0)
+
     def test_redacts_luhn_valid_card_number(self):
         redacted, counts = redact_pii("Carta di test: 4111 1111 1111 1111")
         self.assertIn("[REDACTED_CREDIT_CARD]", redacted)

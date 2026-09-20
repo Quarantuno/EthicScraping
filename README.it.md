@@ -252,7 +252,7 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-129 test coprono la logica pura di scraper (incluso retry/backoff e
+134 test coprono la logica pura di scraper (incluso retry/backoff e
 filtro Content-Type, con `requests.get` mockato), pipeline (incluse le
 euristiche di qualita' del testo e il degrado del rilevamento lingua),
 ripresa della crawl, revisione e preparazione dati per il training —
@@ -303,7 +303,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 129 unit test, nessuna dipendenza pesante
+├── tests/               # 134 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE              # MIT

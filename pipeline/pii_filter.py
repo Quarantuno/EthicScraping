@@ -10,15 +10,21 @@ beyond experimentation -- see the README for how to plug one in.
 CREDIT_CARD and PHONE need more than a bare digit-count regex: a real
 run against Wikipedia articles showed a naive "13-16 digits" /
 "6-11 digits with optional separators" pattern redacting DOIs, ISSNs,
-arXiv ids and patent application numbers as if they were credit cards
-and phone numbers -- encyclopedic and academic text is full of long
-citation numbers that structurally look just like one. So both labels
-here run a plain regex to find CANDIDATE spans, then validate each
-candidate: CREDIT_CARD requires a real Luhn checksum pass (the same
-check real card issuers use, and one a DOI/ISSN/patent number will only
-pass by chance), and both additionally reject a candidate immediately
-preceded by a known citation/identifier keyword (doi, issn, isbn,
-arxiv, uibm, orcid, isni). Still best-effort, not perfect -- see above.
+arXiv ids, patent application numbers, and Wikipedia's own revision-id
+and ad-tracking URL parameters as if they were credit cards and phone
+numbers -- encyclopedic pages are full of long numeric ids that
+structurally look just like one. So both labels here run a plain regex
+to find CANDIDATE spans, then validate each candidate: CREDIT_CARD
+requires a real Luhn checksum pass (the same check real card issuers
+use, and one a DOI/ISSN/patent number will only pass by chance); both
+additionally reject a candidate that has a citation/identifier keyword
+(doi, issn, isbn, arxiv, uibm, orcid, isni) ANYWHERE in the text just
+before it -- not only immediately before, since a real DOI reads like
+"DOI: 10.1016/j.patter.2024.101074" with the journal/article path
+sitting between the keyword and the actual number -- or that is
+immediately preceded by "=" (a URL query-parameter value, e.g.
+"...&oldid=123456789" or "gad_campaignid=987654321", never personal
+data). Still best-effort, not perfect -- see above.
 """
 from __future__ import annotations
 
@@ -39,19 +45,39 @@ PHONE_CANDIDATE = re.compile(
     r"(?<!\d)(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}(?!\d)"
 )
 
-# Bibliographic/identifier keywords that commonly precede a long number
-# in encyclopedic and academic text (DOI, ISSN, ISBN, arXiv ids, patent
-# application numbers, ORCID/ISNI researcher/author ids). A number
-# immediately preceded by one of these is essentially never a real
-# phone number or credit card. Checked case-insensitively in a short
-# window before the candidate match.
-_CITATION_CONTEXT_RE = re.compile(
-    r"(doi|issn|isbn|arxiv|uibm|orcid|isni)\s*[:.\-]?\s*$", re.IGNORECASE
-)
+# Bibliographic/identifier keywords that commonly appear shortly before
+# a long number in encyclopedic and academic text (DOI, ISSN, ISBN,
+# arXiv ids, patent application numbers, ORCID/ISNI researcher/author
+# ids). Deliberately searched ANYWHERE in the lookback window rather
+# than anchored immediately before the match: a real citation reads
+# "DOI: 10.1016/j.patter.2024.101074" or "ISBN 978-0-XXX-XXXXX-X", with
+# a journal path or prefix digits sitting between the keyword and the
+# actual number, so requiring strict adjacency misses almost every real
+# case. Checked case-insensitively.
+_CITATION_CONTEXT_RE = re.compile(r"(doi|issn|isbn|arxiv|uibm|orcid|isni)", re.IGNORECASE)
+
+# How far back to look for a citation keyword -- long enough to cover
+# "DOI\n:\n10.1016/j.compbiomed." (journal abbreviations vary in length)
+# without being so long it starts matching unrelated earlier text.
+_CITATION_CONTEXT_WINDOW = 60
 
 
-def _preceded_by_citation_context(full_text: str, start: int, window: int = 20) -> bool:
+def _preceded_by_citation_context(full_text: str, start: int,
+                                   window: int = _CITATION_CONTEXT_WINDOW) -> bool:
     return bool(_CITATION_CONTEXT_RE.search(full_text[max(0, start - window):start]))
+
+
+def _preceded_by_equals_sign(full_text: str, start: int) -> bool:
+    """True if the match is the value side of a "key=value" pair, once
+    whitespace/newlines between the key and the value are skipped (the
+    text extractor inserts a newline per HTML element, so a URL like
+    "...&oldid=123456789" can end up as "oldid\n=\n123456789"). Such a
+    value is a URL parameter -- a page revision id, an ad-tracking
+    click id, ... -- never personal data."""
+    i = start - 1
+    while i >= 0 and full_text[i].isspace():
+        i -= 1
+    return i >= 0 and full_text[i] == "="
 
 
 def _luhn_valid(digits: str) -> bool:
@@ -72,6 +98,8 @@ def _is_real_credit_card(match: "re.Match[str]") -> bool:
         return False
     if _preceded_by_citation_context(match.string, match.start()):
         return False
+    if _preceded_by_equals_sign(match.string, match.start()):
+        return False
     return _luhn_valid(digits)
 
 
@@ -80,6 +108,8 @@ def _is_real_phone(match: "re.Match[str]") -> bool:
     if len(digits) < 9 or len(digits) > 13:
         return False
     if _preceded_by_citation_context(match.string, match.start()):
+        return False
+    if _preceded_by_equals_sign(match.string, match.start()):
         return False
     return True
 
