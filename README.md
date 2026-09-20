@@ -35,7 +35,10 @@ review pipeline — not just into the final model's prompt.
   encoding, absurdly long "words") via dependency-free heuristics,
   optionally filters by detected language, **redacts personal data**
   (emails, phone numbers, IBANs, IPs, credit-card-like numbers via
-  regex; optionally also names and places via NER, see below),
+  regex, with Luhn-checksum validation and citation-keyword awareness
+  so DOIs/ISSNs/patent numbers in encyclopedic text aren't misflagged
+  as credit cards or phone numbers; optionally also names and places
+  via NER, see below),
   deduplicates content (both exact hashing and near-duplicates via
   SimHash), and writes each record to JSONL with full provenance (URL,
   domain, license, language, quality score, collection timestamp).
@@ -240,7 +243,7 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-116 tests cover the pure logic of the scraper (including retry/backoff
+129 tests cover the pure logic of the scraper (including retry/backoff
 and Content-Type filtering, with `requests.get` mocked), pipeline
 (including the text-quality heuristics and language-detection
 degradation path), crawl resumability, review, and training data prep —
@@ -291,7 +294,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 116 unit tests, no heavy dependencies
+├── tests/                # 129 unit tests, no heavy dependencies
 ├── main.py               # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE                # MIT
