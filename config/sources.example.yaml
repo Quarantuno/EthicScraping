@@ -81,3 +81,34 @@ crawl:
 seeds:
   - https://it.wikipedia.org/wiki/Intelligenza_artificiale
   - https://it.wikipedia.org/wiki/Etica_dei_dati
+
+# Seed extra utili per testare la pipeline su siti diversi da Wikipedia
+# (ognuno mette alla prova un percorso diverso del codice). Scommentali
+# e aggiungili a `seeds:` sopra per provarli:
+#
+#  - https://www.gutenberg.org/cache/epub/45334/pg45334-images.html
+#    "I promessi sposi" di Manzoni, dominio pubblico, gutenberg.org e' gia'
+#    in KNOWN_OPEN_DOMAINS (licenza rilevata subito con confidence "high").
+#    Testo narrativo/dialogico molto diverso da una voce enciclopedica:
+#    utile per vedere come si comporta il filtro di qualita' su prosa con
+#    molti a-capo e dialoghi. NOTA: gutenberg.org e' stato oggetto di
+#    oscuramento per alcuni provider italiani (caso "Piracy Shield"); se il
+#    fetch fallisce con un errore di connessione dalla tua rete, non e' un
+#    bug della pipeline, e' probabile un blocco lato provider.
+#
+#  - https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements
+#    MDN Web Docs: licenza reale CC BY-SA 2.5+, ma il link in fondo pagina
+#    rimanda a una pagina di spiegazione di MDN, non direttamente a
+#    creativecommons.org -- quindi ci si aspetta che il rilevamento dia
+#    "unknown" (comportamento corretto e prudente, non un bug: senza
+#    seguire quel link secondario non c'e' un segnale automatico
+#    inequivocabile). Buon test anche per il filtro qualita' su testo
+#    tecnico (tag HTML, codice, tabelle).
+#
+#  - https://opencontent.org/blog/
+#    Blog CC BY 4.0 con link diretto a creativecommons.org nel footer ma
+#    SENZA l'attributo rel="license" -- il pattern reale piu' comune sul
+#    web. Test per il fallback href_cc_link di license_detector.py
+#    (confidence "medium", a differenza di "high" per rel="license").
+
+

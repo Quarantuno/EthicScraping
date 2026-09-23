@@ -27,10 +27,12 @@ raccolta e revisione, non solo nel prompt del modello finale.
   gia' visitate (`scraper/crawl_state.py`, `main.py run --reset-state`
   per ripartire da zero).
 - **Rilevamento licenza** (`scraper/license_detector.py`): tenta di
-  individuare la licenza di ogni pagina (link/meta `rel="license"`,
-  pattern Creative Commons, domini noti come Wikipedia/Gutenberg). Se non
-  trova nulla, la pagina viene etichettata come licenza "unknown" — mai
-  assunta open di default.
+  individuare la licenza di ogni pagina (link/meta `rel="license"`, un
+  semplice `<a href="creativecommons.org/licenses/...">` anche senza
+  l'attributo `rel="license"` — il caso piu' comune nella realta' —
+  pattern Creative Commons nel testo visibile, domini noti come
+  Wikipedia/Gutenberg). Se non trova nulla, la pagina viene etichettata
+  come licenza "unknown" — mai assunta open di default.
 - **Pipeline dati** (`pipeline/`): pulisce l'HTML in testo, filtra il
   testo di bassa qualita' (per lo piu' boilerplate/righe ripetute,
   codifica rovinata, "parole" assurdamente lunghe) con euristiche senza
@@ -252,12 +254,13 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-147 test coprono la logica pura di scraper (incluso retry/backoff e
-filtro Content-Type, con `requests.get` mockato), pipeline (incluse le
-euristiche di qualita' del testo, il degrado del rilevamento lingua, e
-una verifica di correttezza dell'indice LSH a bande per la deduplica
-contro un confronto di riferimento a forza bruta), ripresa della crawl,
-revisione e preparazione dati per il training —
+157 test coprono la logica pura di scraper (incluso retry/backoff, filtro
+Content-Type, e il rilevamento licenza in tutti i suoi percorsi di
+fallback, con `requests.get` mockato), pipeline (incluse le euristiche di
+qualita' del testo, il degrado del rilevamento lingua, e una verifica di
+correttezza dell'indice LSH a bande per la deduplica contro un confronto
+di riferimento a forza bruta), ripresa della crawl, revisione e
+preparazione dati per il training —
 nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect non
 servono per farli passare, il codice degrada correttamente quando non
 sono installati).
@@ -305,7 +308,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 147 unit test, nessuna dipendenza pesante
+├── tests/               # 157 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE              # MIT

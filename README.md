@@ -26,10 +26,12 @@ review pipeline — not just into the final model's prompt.
   without re-fetching pages it already visited (`scraper/crawl_state.py`,
   `main.py run --reset-state` to start over).
 - **License detection** (`scraper/license_detector.py`): best-effort
-  detection of each page's license (`rel="license"` link/meta tag,
-  Creative Commons patterns, known domains like Wikipedia/Gutenberg). If
-  nothing is found, the page is labeled license "unknown" — never
-  assumed open by default.
+  detection of each page's license (`rel="license"` link/meta tag, a
+  plain `<a href="creativecommons.org/licenses/...">` even without the
+  `rel="license"` attribute — the common real-world case — Creative
+  Commons patterns in visible text, known domains like
+  Wikipedia/Gutenberg). If nothing is found, the page is labeled license
+  "unknown" — never assumed open by default.
 - **Data pipeline** (`pipeline/`): cleans HTML into text, filters out
   low-quality text (mostly-boilerplate/repeated lines, garbled
   encoding, absurdly long "words") via dependency-free heuristics,
@@ -242,11 +244,12 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-147 tests cover the pure logic of the scraper (including retry/backoff
-and Content-Type filtering, with `requests.get` mocked), pipeline
-(including the text-quality heuristics, language-detection degradation
-path, and a correctness check of the banded LSH dedup index against a
-brute-force reference), crawl resumability, review, and training data prep —
+157 tests cover the pure logic of the scraper (including retry/backoff,
+Content-Type filtering, and license detection across all its fallback
+paths, with `requests.get` mocked), pipeline (including the text-quality
+heuristics, language-detection degradation path, and a correctness
+check of the banded LSH dedup index against a brute-force reference),
+crawl resumability, review, and training data prep —
 none require network access or heavy dependencies (torch/spaCy/
 langdetect aren't needed for them to pass; the code degrades correctly
 when those aren't installed).
@@ -294,7 +297,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 147 unit tests, no heavy dependencies
+├── tests/                # 157 unit tests, no heavy dependencies
 ├── main.py               # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE                # MIT
