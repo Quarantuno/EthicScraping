@@ -6,17 +6,24 @@ quasi identiche (stessa notizia ripubblicata con piccole modifiche,
 mirror, paginazione che ripete il corpo dell'articolo, ecc.) confrontando
 la distanza di Hamming tra le impronte a 64 bit.
 
-Nota di scala: il controllo near-duplicate confronta ogni nuovo documento
-con tutti i SimHash visti finora (O(n) per documento). Va benissimo per
-dataset di migliaia di pagine; per milioni di pagine servirebbe un indice
-LSH (bucket per prefisso di bit) -- non incluso qui per restare semplice
-nella fase 1.
+Indice LSH a bande: il controllo near-duplicate non confronta piu' ogni
+nuovo documento con tutti i SimHash visti finora (O(n) per documento).
+L'impronta a `bits` bit viene divisa in `num_bands` bande; due impronte
+identiche in almeno una banda sono candidate, e solo per queste si calcola
+la vera distanza di Hamming. Per il principio dei cassetti, se due
+impronte differiscono in al piu' `threshold` bit e il numero di bande e'
+maggiore di `threshold`, almeno una banda coincide esattamente -- quindi
+nessun near-duplicate reale (entro la soglia) viene perso rispetto al
+confronto lineare originale, a patto che `num_bands > threshold`
+(garantito automaticamente da `_choose_num_bands`). In pratica il costo
+per documento scende da O(n) a O(candidati nelle bande), che per dataset
+di milioni di pagine con pochi duplicati resta piccolo.
 """
 from __future__ import annotations
 
 import hashlib
 import re
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
 
@@ -74,6 +81,53 @@ def hamming_distance(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+def _choose_num_bands(bits: int, threshold: int) -> int:
+    """Numero di bande piu' piccolo (quindi banda piu' larga possibile,
+    per ridurre le collisioni spurie) che divide `bits` esattamente ed e'
+    maggiore di `threshold`, cosi' da garantire per il principio dei
+    cassetti che nessun near-duplicate entro `threshold` bit venga perso.
+    """
+    threshold = max(threshold, 0)
+    for k in range(threshold + 1, bits + 1):
+        if bits % k == 0:
+            return k
+    return bits  # fallback estremo: una banda per bit, sempre corretto
+
+
+class _SimHashLSHIndex:
+    """Indice a bande (locality-sensitive hashing) per cercare SimHash
+    entro una distanza di Hamming massima senza scandire ogni impronta
+    vista finora."""
+
+    def __init__(self, bits: int, threshold: int):
+        self.bits = bits
+        self.threshold = threshold
+        self.num_bands = _choose_num_bands(bits, threshold)
+        self.band_bits = bits // self.num_bands
+        self._buckets: List[Dict[int, Set[int]]] = [dict() for _ in range(self.num_bands)]
+
+    def _band_value(self, fingerprint: int, band_index: int) -> int:
+        shift = band_index * self.band_bits
+        mask = (1 << self.band_bits) - 1
+        return (fingerprint >> shift) & mask
+
+    def find_within_threshold(self, fingerprint: int) -> bool:
+        """True se esiste gia' un'impronta indicizzata a distanza di
+        Hamming <= self.threshold da `fingerprint`."""
+        candidates: Set[int] = set()
+        for band_index in range(self.num_bands):
+            bucket = self._buckets[band_index].get(self._band_value(fingerprint, band_index))
+            if bucket:
+                candidates.update(bucket)
+        return any(hamming_distance(fingerprint, candidate) <= self.threshold
+                    for candidate in candidates)
+
+    def add(self, fingerprint: int) -> None:
+        for band_index in range(self.num_bands):
+            bv = self._band_value(fingerprint, band_index)
+            self._buckets[band_index].setdefault(bv, set()).add(fingerprint)
+
+
 class Deduplicator:
     def __init__(self, near_duplicate_threshold: Optional[int] = 8,
                  simhash_bits: int = 64):
@@ -88,22 +142,24 @@ class Deduplicator:
             disattivarla.
         """
         self._seen_hashes: Set[str] = set()
-        self._seen_simhashes: List[int] = []
         self.near_duplicate_threshold = near_duplicate_threshold
         self.simhash_bits = simhash_bits
+        self._lsh_index: Optional[_SimHashLSHIndex] = (
+            _SimHashLSHIndex(simhash_bits, near_duplicate_threshold)
+            if near_duplicate_threshold is not None else None
+        )
 
     def is_duplicate(self, text: str) -> bool:
         h = content_hash(text)
         if h in self._seen_hashes:
             return True
 
-        if self.near_duplicate_threshold is not None:
+        if self._lsh_index is not None:
             sh = simhash(text, bits=self.simhash_bits)
-            for seen_sh in self._seen_simhashes:
-                if hamming_distance(sh, seen_sh) <= self.near_duplicate_threshold:
-                    self._seen_hashes.add(h)
-                    return True
-            self._seen_simhashes.append(sh)
+            if self._lsh_index.find_within_threshold(sh):
+                self._seen_hashes.add(h)
+                return True
+            self._lsh_index.add(sh)
 
         self._seen_hashes.add(h)
         return False

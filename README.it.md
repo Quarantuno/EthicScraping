@@ -41,7 +41,9 @@ raccolta e revisione, non solo nel prompt del modello finale.
   in testo enciclopedico non vengano scambiati per carte di credito o
   numeri di telefono; opzionalmente anche nomi propri e luoghi via NER,
   vedi sotto), deduplica i contenuti (sia hash esatto sia quasi-duplicati
-  via SimHash), e scrive ogni record in JSONL con provenienza completa
+  via SimHash, cercati tramite un indice LSH a bande cosi' che il
+  confronto non scandisca tutto il corpus a ogni documento), e scrive
+  ogni record in JSONL con provenienza completa
   (URL, dominio, licenza, lingua, punteggio di qualita', timestamp di
   raccolta).
 - **Revisione umana** (`pipeline/review.py`, comando `main.py review`):
@@ -110,8 +112,6 @@ dataset.
 - Un training vero validato su hardware reale, e un passaggio di eval
   con `eval/` sul risultato (gli scaffold ci sono e sono testati in
   isolamento, ma non ancora eseguiti insieme end-to-end).
-- Indice LSH per la deduplica fuzzy su larga scala (oggi confronto O(n)
-  per documento, adatto a dataset di migliaia di pagine, non milioni).
 
 ## Installazione
 
@@ -252,10 +252,12 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-134 test coprono la logica pura di scraper (incluso retry/backoff e
+147 test coprono la logica pura di scraper (incluso retry/backoff e
 filtro Content-Type, con `requests.get` mockato), pipeline (incluse le
-euristiche di qualita' del testo e il degrado del rilevamento lingua),
-ripresa della crawl, revisione e preparazione dati per il training —
+euristiche di qualita' del testo, il degrado del rilevamento lingua, e
+una verifica di correttezza dell'indice LSH a bande per la deduplica
+contro un confronto di riferimento a forza bruta), ripresa della crawl,
+revisione e preparazione dati per il training —
 nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect non
 servono per farli passare, il codice degrada correttamente quando non
 sono installati).
@@ -281,7 +283,7 @@ ScrapeLLM/
 │   ├── text_extractor.py
 │   ├── pii_filter.py
 │   ├── ner_pii.py       # PII avanzata via NER (opzionale, spaCy)
-│   ├── dedup.py          # hash esatto + SimHash per i quasi-duplicati
+│   ├── dedup.py          # hash esatto + SimHash/indice LSH per i quasi-duplicati
 │   ├── review.py         # revisione umana (stato persistito)
 │   ├── quality_filter.py # euristiche di qualita' del testo, senza dipendenze
 │   ├── language_detector.py # rilevamento lingua opzionale (langdetect)
@@ -303,7 +305,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 134 unit test, nessuna dipendenza pesante
+├── tests/               # 147 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE              # MIT

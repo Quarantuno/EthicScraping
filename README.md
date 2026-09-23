@@ -40,7 +40,8 @@ review pipeline — not just into the final model's prompt.
   as credit cards or phone numbers; optionally also names and places
   via NER, see below),
   deduplicates content (both exact hashing and near-duplicates via
-  SimHash), and writes each record to JSONL with full provenance (URL,
+  SimHash, matched through a banded LSH index so lookups don't scan the
+  whole corpus per document), and writes each record to JSONL with full provenance (URL,
   domain, license, language, quality score, collection timestamp).
 - **Human review** (`pipeline/review.py`, `main.py review` command):
   walks through the produced dataset and has a human approve/reject
@@ -104,8 +105,6 @@ your dataset export.
 - An actual training run validated on real hardware, and an eval pass
   using `eval/` against the result (the scaffolds are there and tested
   in isolation, but not run together end-to-end).
-- An LSH index for large-scale fuzzy dedup (today it's an O(n) per-doc
-  comparison, fine for datasets of thousands of pages, not millions).
 
 ## Installation
 
@@ -243,10 +242,11 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-134 tests cover the pure logic of the scraper (including retry/backoff
+147 tests cover the pure logic of the scraper (including retry/backoff
 and Content-Type filtering, with `requests.get` mocked), pipeline
-(including the text-quality heuristics and language-detection
-degradation path), crawl resumability, review, and training data prep —
+(including the text-quality heuristics, language-detection degradation
+path, and a correctness check of the banded LSH dedup index against a
+brute-force reference), crawl resumability, review, and training data prep —
 none require network access or heavy dependencies (torch/spaCy/
 langdetect aren't needed for them to pass; the code degrades correctly
 when those aren't installed).
@@ -272,7 +272,7 @@ ScrapeLLM/
 │   ├── text_extractor.py
 │   ├── pii_filter.py
 │   ├── ner_pii.py        # advanced PII via NER (optional, spaCy)
-│   ├── dedup.py           # exact hash + SimHash for near-duplicates
+│   ├── dedup.py           # exact hash + SimHash/LSH index for near-duplicates
 │   ├── review.py          # human review (persisted state)
 │   ├── quality_filter.py  # dependency-free text-quality heuristics
 │   ├── language_detector.py # optional language detection (langdetect)
@@ -294,7 +294,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 134 unit tests, no heavy dependencies
+├── tests/                # 147 unit tests, no heavy dependencies
 ├── main.py               # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE                # MIT
