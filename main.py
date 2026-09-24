@@ -28,6 +28,7 @@ from scraper.crawler import Crawler
 from scraper.crawl_state import CrawlState
 from scraper.sitemap import SitemapFetcher
 from pipeline.dataset_writer import DatasetWriter
+from pipeline.dedup import Deduplicator
 from pipeline.review import ReviewSession
 from pipeline.dataset_stats import compute_stats, render_text as render_stats_text
 
@@ -367,6 +368,73 @@ def run(config_path: str, verbose: bool, reset_state: bool):
             "Stato di crawling salvato in %s (%d URL totali visitati finora).",
             crawl_state.state_path, len(crawl_state.visited),
         )
+
+
+@cli.command()
+@click.option("--inputs", "input_paths", multiple=True, required=True,
+              help="File JSONL da unire (passa --inputs piu' volte, uno per file)")
+@click.option("--output", "output_path", required=True, help="Percorso del file JSONL unito")
+@click.option("--near-duplicate-threshold", type=int, default=8, show_default=True,
+              help="Soglia di distanza di Hamming per la dedup fuzzy (come output.near_duplicate_threshold nel config)")
+@click.option("--exact-only", is_flag=True,
+              help="Deduplica solo per hash esatto, disattiva il controllo fuzzy (SimHash)")
+@click.option("--no-dedup", is_flag=True, help="Nessuna deduplica: concatena e basta")
+def merge(input_paths: tuple, output_path: str, near_duplicate_threshold: int,
+          exact_only: bool, no_dedup: bool):
+    """Unisce piu' dataset JSONL gia' prodotti in uno solo, deduplicando
+    tra TUTTI i file insieme (non solo dentro ciascuno) con lo stesso
+    meccanismo usato da 'run' -- hash esatto + near-duplicate via
+    SimHash (pipeline.dedup.Deduplicator).
+
+    Utile per unire run fatte in momenti diversi, o dataset costruiti
+    da seed set diversi, senza ritrovarsi lo stesso articolo due volte
+    solo perche' e' finito in due file.
+    """
+    if len(input_paths) < 2:
+        click.echo("Servono almeno due file in --inputs per fare un merge.", err=True)
+        sys.exit(1)
+
+    for path in input_paths:
+        if not os.path.exists(path):
+            click.echo(f"File non trovato: {path}", err=True)
+            sys.exit(1)
+
+    threshold = None if (no_dedup or exact_only) else near_duplicate_threshold
+    dedup = None if no_dedup else Deduplicator(near_duplicate_threshold=threshold)
+
+    total_in = 0
+    total_dupes = 0
+    per_file_kept = []
+
+    dest_dir = os.path.dirname(output_path)
+    if dest_dir:
+        os.makedirs(dest_dir, exist_ok=True)
+
+    with open(output_path, "w", encoding="utf-8") as out_f:
+        for path in input_paths:
+            kept_here = 0
+            with open(path, "r", encoding="utf-8") as in_f:
+                for line in in_f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    record = json.loads(line)
+                    total_in += 1
+                    if dedup is not None and dedup.is_duplicate(record.get("text", "")):
+                        total_dupes += 1
+                        continue
+                    out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    kept_here += 1
+            per_file_kept.append((path, kept_here))
+
+    total_out = total_in - total_dupes
+    click.echo(f"Letti {total_in} record da {len(input_paths)} file.")
+    if dedup is not None:
+        mode = "solo hash esatto" if threshold is None else f"hash esatto + fuzzy (soglia={threshold})"
+        click.echo(f"Scartati {total_dupes} duplicati/quasi-duplicati ({mode}).")
+    click.echo(f"Scritti {total_out} record in {output_path}.")
+    for path, kept in per_file_kept:
+        click.echo(f"  {path}: {kept} tenuti")
 
 
 @cli.command()

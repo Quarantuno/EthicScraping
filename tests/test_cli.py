@@ -2,6 +2,7 @@
 `run`), la personalizzazione testuale di config/sources.example.yaml
 usata da `init`, e il comando `discover-seeds`.
 """
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -244,6 +245,127 @@ class TestDiscoverSeedsCommand(unittest.TestCase):
                 MockFetcher.call_args.kwargs["user_agent"],
                 "MioBot/1.0 (contatto: me@esempio.it)",
             )
+
+
+def _write_jsonl(path, records):
+    with open(path, "w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+
+
+def _read_jsonl(path):
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+# Reused from tests/test_dedup.py's TestDeduplicatorBehaviorUnchanged: long
+# enough to produce a stable SimHash, so a near-duplicate (one word swapped)
+# reliably falls within the default Hamming threshold.
+_LONG_TEXT = (
+    "Questo e' un articolo abbastanza lungo che parla di un argomento "
+    "qualsiasi e serve solo per avere abbastanza shingle di quattro "
+    "parole da produrre un simhash stabile e confrontabile con una "
+    "versione leggermente modificata dello stesso testo di prova."
+)
+
+
+class TestMergeCommand(unittest.TestCase):
+    def test_requires_at_least_two_inputs(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": "ciao"}])
+            result = runner.invoke(cli, ["merge", "--inputs", "a.jsonl", "--output", "out.jsonl"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("almeno due file", result.output)
+
+    def test_missing_input_file_errors_out(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": "ciao"}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "assente.jsonl", "--output", "out.jsonl",
+            ])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("non trovato", result.output)
+
+    def test_merges_disjoint_files_keeping_everything(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": "Primo articolo unico."}])
+            _write_jsonl("b.jsonl", [{"url": "https://x/2", "text": "Secondo articolo diverso."}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "b.jsonl", "--output", "out.jsonl",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            merged = _read_jsonl("out.jsonl")
+        self.assertEqual(len(merged), 2)
+        self.assertIn("Scritti 2 record", result.output)
+
+    def test_drops_exact_duplicate_across_files(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": _LONG_TEXT}])
+            _write_jsonl("b.jsonl", [{"url": "https://x/2", "text": _LONG_TEXT}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "b.jsonl", "--output", "out.jsonl",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            merged = _read_jsonl("out.jsonl")
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["url"], "https://x/1")  # keeps the first occurrence
+
+    def test_drops_near_duplicate_across_files_by_default(self):
+        near_dup = _LONG_TEXT.replace("qualsiasi", "specifico")
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": _LONG_TEXT}])
+            _write_jsonl("b.jsonl", [{"url": "https://x/2", "text": near_dup}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "b.jsonl", "--output", "out.jsonl",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            merged = _read_jsonl("out.jsonl")
+        self.assertEqual(len(merged), 1)
+
+    def test_exact_only_keeps_near_duplicates(self):
+        near_dup = _LONG_TEXT.replace("qualsiasi", "specifico")
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": _LONG_TEXT}])
+            _write_jsonl("b.jsonl", [{"url": "https://x/2", "text": near_dup}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "b.jsonl",
+                "--output", "out.jsonl", "--exact-only",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            merged = _read_jsonl("out.jsonl")
+        self.assertEqual(len(merged), 2)
+
+    def test_no_dedup_keeps_exact_duplicates_too(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            _write_jsonl("a.jsonl", [{"url": "https://x/1", "text": _LONG_TEXT}])
+            _write_jsonl("b.jsonl", [{"url": "https://x/2", "text": _LONG_TEXT}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "b.jsonl",
+                "--output", "out.jsonl", "--no-dedup",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            merged = _read_jsonl("out.jsonl")
+        self.assertEqual(len(merged), 2)
+
+    def test_ignores_blank_lines_in_input(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("a.jsonl", "w", encoding="utf-8") as f:
+                f.write(json.dumps({"url": "https://x/1", "text": "uno"}) + "\n\n")
+            _write_jsonl("b.jsonl", [{"url": "https://x/2", "text": "due"}])
+            result = runner.invoke(cli, [
+                "merge", "--inputs", "a.jsonl", "--inputs", "b.jsonl", "--output", "out.jsonl",
+            ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            merged = _read_jsonl("out.jsonl")
+        self.assertEqual(len(merged), 2)
 
 
 class TestRunUsesSharedValidation(unittest.TestCase):
