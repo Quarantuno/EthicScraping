@@ -55,11 +55,15 @@ review pipeline — not just into the final model's prompt.
   walks through the produced dataset and has a human approve/reject
   each record, saving progress so you can stop and resume. Produces
   `*_approved.jsonl` and `*_rejected.jsonl`.
-- **CLI** (`main.py`): `run` (scraping + pipeline), `review` (human
-  review), and `stats` (record count, word-count and text-quality
-  distribution, top domains, domain concentration, language mix,
-  license mix, PII redaction totals, residual TDM reservations for an
-  existing dataset) commands, driven by YAML config / options.
+- **CLI** (`main.py`): `init` (guided `config/sources.yaml` setup),
+  `discover-seeds` (candidate seed URLs from a site's `sitemap.xml`),
+  `run` (scraping + pipeline), `merge` (combine several dataset files
+  with cross-file dedup), `review` (human review), and `stats` (record
+  count, word-count and text-quality distribution, top domains, domain
+  concentration, language mix, license mix, PII redaction totals,
+  residual TDM reservations for an existing dataset) commands, driven
+  by YAML config / options. Also installable as a `scrapellm` console
+  command, see Installation below.
 
 ### Phase 2 — Fine-tuning (scaffold, not yet run end-to-end)
 
@@ -126,7 +130,27 @@ If creating the virtualenv gives you trouble in your environment, a
 direct `pip install -r requirements.txt` (no venv) also works, at the
 cost of installing dependencies system/user-wide.
 
+Alternatively, install it as a proper package (`pyproject.toml`,
+`pip install -e .`) and use the `scrapellm` command instead of
+`python main.py` everywhere below (`scrapellm run`, `scrapellm init`,
+...). Optional extras: `pip install -e ".[ner]"` (spaCy),
+`.[lang]` (langdetect), `.[full]` (both), `.[dev]` (test tooling).
+
 ## Usage
+
+### 0. Quick start: guided setup
+
+```bash
+python main.py init
+```
+
+Copies `config/sources.example.yaml` to `config/sources.yaml`, asking
+three quick questions (project name, an honest User-Agent, a first seed
+URL) and filling them in while leaving every explanatory comment in the
+example file intact. `--non-interactive` copies the example as-is (for
+scripts/CI), `--force` overwrites an existing `config/sources.yaml`.
+Prints a validation summary at the end, or use `--help` to see all
+options. You can also just do step 1 by hand instead.
 
 ### 1. Configure and run the scraper
 
@@ -137,7 +161,8 @@ cp config/sources.example.yaml config/sources.yaml
 Edit `config/sources.yaml`:
 - **`project.user_agent`**: put a real contact (email or project URL).
   The tool refuses to start with the example placeholder user agent.
-- **`seeds`**: the starting URLs.
+- **`seeds`**: the starting URLs. Don't want to pick them by hand? See
+  "Discover seeds from a sitemap" below.
 - **`deny_domains`**: domains to always skip.
 - **`output.min_license_confidence`**: `null` to keep everything (with a
   license label), `"high"` to keep only content with a clearly
@@ -208,7 +233,38 @@ are saved to disk immediately: you can stop and resume anytime, already
 decided records won't be shown again. Result:
 `dataset/output_approved.jsonl` and `dataset/output_rejected.jsonl`.
 
-### 3. (Optional) Phase 2 — fine-tuning
+### 3. Discover seeds from a sitemap
+
+```bash
+python main.py discover-seeds --sitemap https://example.com/sitemap.xml --config config/sources.yaml
+```
+
+Parses a site's `sitemap.xml` (following a sitemap *index* -- a sitemap
+that just lists other sitemaps -- if that's what it turns out to be)
+and prints the page URLs it finds, as candidates for `seeds:`. Still
+goes through the same ethics as every other fetch in this project
+(`robots.txt`, rate limiting, an honest User-Agent, read from
+`--config` or passed directly with `--user-agent`). Doesn't touch
+`config/sources.yaml` on its own -- use `--contains` to filter by a
+URL substring, `--limit` to cap how many, `--output seeds.yaml` to
+write a ready-to-paste `seeds:` YAML block instead of printing. Picking
+what actually goes into `seeds:` is left to you on purpose, see the
+checklist below.
+
+### 4. Merge multiple dataset files
+
+```bash
+python main.py merge --inputs dataset/run1.jsonl --inputs dataset/run2.jsonl --output dataset/merged.jsonl
+```
+
+Combines several JSONL files produced by separate runs (different seed
+sets, different days, ...) into one, deduplicating across *all* of them
+together with the same exact-hash + SimHash near-duplicate mechanism
+`run` uses internally, so an article that ended up in two separate
+files only survives once. `--exact-only` skips the fuzzy check,
+`--no-dedup` skips deduplication entirely (plain concatenation).
+
+### 5. (Optional) Phase 2 — fine-tuning
 
 See `training/README.md`. In short:
 
@@ -250,15 +306,20 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-162 tests cover the pure logic of the scraper (including retry/backoff,
-Content-Type filtering, and license detection across all its fallback
-paths, with `requests.get` mocked), pipeline (including the text-quality
-heuristics, language-detection degradation path, and a correctness
-check of the banded LSH dedup index against a brute-force reference),
-crawl resumability, review, and training data prep —
+202 tests cover the pure logic of the scraper (including retry/backoff,
+Content-Type filtering, sitemap/sitemap-index parsing, and license
+detection across all its fallback paths, with `requests.get` mocked),
+pipeline (including the text-quality heuristics, language-detection
+degradation path, and a correctness check of the banded LSH dedup index
+against a brute-force reference), the `init`/`discover-seeds`/`merge`/
+`run` CLI commands end-to-end via `click.testing.CliRunner`, crawl
+resumability, review, and training data prep —
 none require network access or heavy dependencies (torch/spaCy/
 langdetect aren't needed for them to pass; the code degrades correctly
 when those aren't installed).
+
+Runs automatically on every push/PR to `main` via GitHub Actions
+(`.github/workflows/tests.yml`) across Python 3.9/3.11/3.12.
 
 An actual scraping run (`python main.py run --config ...`) does need
 outbound network access to the target sites: running it from an
@@ -276,6 +337,7 @@ ScrapeLLM/
 │   ├── tdm_rights.py    # Art. 4(3) Directive 2019/790 opt-out detection (TDMRep)
 │   ├── fetcher.py        # retry-with-backoff + Content-Type filtering
 │   ├── crawl_state.py    # resumable crawling (persisted visited-URL state)
+│   ├── sitemap.py         # sitemap/sitemap-index parsing for `discover-seeds`
 │   └── crawler.py
 ├── pipeline/            # cleaning, PII, dedup, review, dataset writing
 │   ├── text_extractor.py
@@ -299,12 +361,14 @@ ScrapeLLM/
 │   └── README.md
 ├── compliance/           # AI Act training-data-summary draft generator
 │   └── generate_training_summary.py
+├── .github/workflows/     # CI: runs the test suite on push/PR (tests.yml)
 ├── COMPLIANCE.md          # GDPR / AI Act / Copyright Directive mapping (+ .it.md)
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 162 unit tests, no heavy dependencies
-├── main.py               # CLI: run, review, stats
+├── tests/                # 202 unit tests, no heavy dependencies
+├── main.py               # CLI: init, discover-seeds, run, merge, review, stats
+├── pyproject.toml         # packaging: `pip install -e .` -> `scrapellm` command
 ├── requirements.txt
 └── LICENSE                # MIT
 ```

@@ -58,12 +58,16 @@ raccolta e revisione, non solo nel prompt del modello finale.
   scorre il dataset prodotto e fa approvare/rifiutare ogni record a
   occhio umano, salvando lo stato cosi' da poter interrompere e
   riprendere. Produce `*_approved.jsonl` e `*_rejected.jsonl`.
-- **CLI** (`main.py`): comandi `run` (scraping + pipeline), `review`
+- **CLI** (`main.py`): comandi `init` (configurazione guidata di
+  `config/sources.yaml`), `discover-seeds` (URL candidati come seed
+  letti dal `sitemap.xml` di un sito), `run` (scraping + pipeline),
+  `merge` (unisce piu' file dataset con dedup tra i file), `review`
   (revisione umana) e `stats` (numero di record, distribuzione delle
   parole e della qualita' del testo, domini principali, concentrazione
   dei domini, mix di lingue, mix di licenze, PII redatte, reservation
   TDM residue di un dataset gia' prodotto), guidati da config
-  YAML/opzioni.
+  YAML/opzioni. Installabile anche come comando `scrapellm`, vedi
+  Installazione piu' sotto.
 
 ### Fase 2 — Fine-tuning (scaffold, non ancora eseguito end-to-end)
 
@@ -133,7 +137,28 @@ Se la creazione del virtualenv da' problemi nel tuo ambiente, va bene
 anche `pip install -r requirements.txt` diretto (senza venv), a costo di
 installare le dipendenze a livello di sistema/utente.
 
+In alternativa, installalo come pacchetto vero e proprio
+(`pyproject.toml`, `pip install -e .`) e usa il comando `scrapellm` al
+posto di `python main.py` in tutto quello che segue (`scrapellm run`,
+`scrapellm init`, ...). Extra opzionali: `pip install -e ".[ner]"`
+(spaCy), `.[lang]` (langdetect), `.[full]` (entrambi), `.[dev]`
+(strumenti per i test).
+
 ## Uso
+
+### 0. Avvio rapido: configurazione guidata
+
+```bash
+python main.py init
+```
+
+Copia `config/sources.example.yaml` in `config/sources.yaml`, facendo
+tre domande rapide (nome progetto, User-Agent onesto, primo seed URL) e
+compilandole senza toccare i commenti esplicativi del file di esempio.
+`--non-interactive` copia l'esempio cosi' com'e' (per script/CI),
+`--force` sovrascrive un `config/sources.yaml` gia' esistente. Alla
+fine stampa un riepilogo di validazione, oppure `--help` per tutte le
+opzioni. Puoi anche fare il passo 1 a mano invece di usare questo.
 
 ### 1. Configura e lancia lo scraping
 
@@ -144,7 +169,8 @@ cp config/sources.example.yaml config/sources.yaml
 Modifica `config/sources.yaml`:
 - **`project.user_agent`**: metti un contatto reale (email o URL del
   progetto). Il tool si rifiuta di partire con lo user-agent di esempio.
-- **`seeds`**: le URL di partenza.
+- **`seeds`**: le URL di partenza. Non vuoi sceglierle a mano? Vedi
+  "Scopri seed da una sitemap" piu' sotto.
 - **`deny_domains`**: domini da escludere sempre.
 - **`output.min_license_confidence`**: `null` per raccogliere tutto (con
   etichetta di licenza), `"high"` per tenere solo contenuti con licenza
@@ -216,7 +242,39 @@ decisioni si salvano subito su disco: puoi interrompere e riprendere
 quando vuoi, i record gia' decisi non vengono riproposti. Risultato:
 `dataset/output_approved.jsonl` e `dataset/output_rejected.jsonl`.
 
-### 3. (Opzionale) Fase 2 — fine-tuning
+### 3. Scopri seed da una sitemap
+
+```bash
+python main.py discover-seeds --sitemap https://esempio.it/sitemap.xml --config config/sources.yaml
+```
+
+Legge il `sitemap.xml` di un sito (seguendo anche un sitemap index --
+una sitemap che elenca altre sitemap -- se e' quello che trova) e
+stampa gli URL di pagina trovati, come candidati per `seeds:`. Rispetta
+la stessa etica di ogni altro fetch di questo progetto (`robots.txt`,
+rate limiting, User-Agent onesto, letto da `--config` o passato
+direttamente con `--user-agent`). Non tocca `config/sources.yaml` da
+solo -- usa `--contains` per filtrare per sottostringa dell'URL,
+`--limit` per un tetto massimo, `--output seeds.yaml` per scrivere un
+blocco YAML `seeds:` pronto da incollare invece di stamparlo. Decidere
+cosa mettere davvero in `seeds:` resta volutamente a te, vedi la
+checklist qui sotto.
+
+### 4. Unisci piu' file di dataset
+
+```bash
+python main.py merge --inputs dataset/run1.jsonl --inputs dataset/run2.jsonl --output dataset/merged.jsonl
+```
+
+Combina piu' file JSONL prodotti da run separate (seed set diversi,
+giorni diversi, ...) in uno solo, deduplicando tra TUTTI insieme con lo
+stesso meccanismo hash esatto + near-duplicate SimHash usato
+internamente da `run`, cosi' che un articolo finito in due file
+separati sopravviva una volta sola. `--exact-only` disattiva il
+controllo fuzzy, `--no-dedup` disattiva la deduplica del tutto
+(concatenazione pura).
+
+### 5. (Opzionale) Fase 2 — fine-tuning
 
 Vedi `training/README.md`. In breve:
 
@@ -260,16 +318,21 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-162 test coprono la logica pura di scraper (incluso retry/backoff, filtro
-Content-Type, e il rilevamento licenza in tutti i suoi percorsi di
-fallback, con `requests.get` mockato), pipeline (incluse le euristiche di
-qualita' del testo, il degrado del rilevamento lingua, e una verifica di
-correttezza dell'indice LSH a bande per la deduplica contro un confronto
-di riferimento a forza bruta), ripresa della crawl, revisione e
+202 test coprono la logica pura di scraper (incluso retry/backoff, filtro
+Content-Type, parsing di sitemap/sitemap-index, e il rilevamento licenza
+in tutti i suoi percorsi di fallback, con `requests.get` mockato),
+pipeline (incluse le euristiche di qualita' del testo, il degrado del
+rilevamento lingua, e una verifica di correttezza dell'indice LSH a
+bande per la deduplica contro un confronto di riferimento a forza
+bruta), i comandi CLI `init`/`discover-seeds`/`merge`/`run` end-to-end
+via `click.testing.CliRunner`, ripresa della crawl, revisione e
 preparazione dati per il training —
 nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect non
 servono per farli passare, il codice degrada correttamente quando non
 sono installati).
+
+Gira automaticamente su ogni push/PR a `main` via GitHub Actions
+(`.github/workflows/tests.yml`) su Python 3.9/3.11/3.12.
 
 Un run reale di scraping (`python main.py run --config ...`) richiede
 invece una connessione di rete in uscita verso i siti target: se lo
@@ -287,6 +350,7 @@ ScrapeLLM/
 │   ├── tdm_rights.py    # rilevamento opt-out art. 4(3) Direttiva 2019/790 (TDMRep)
 │   ├── fetcher.py        # retry con backoff + filtro Content-Type
 │   ├── crawl_state.py    # crawling ripristinabile (stato URL visitati persistito)
+│   ├── sitemap.py         # parsing sitemap/sitemap-index per `discover-seeds`
 │   └── crawler.py
 ├── pipeline/           # pulizia, PII, dedup, revisione, scrittura dataset
 │   ├── text_extractor.py
@@ -310,12 +374,14 @@ ScrapeLLM/
 │   └── README.md
 ├── compliance/           # generatore bozza riepilogo dati per AI Act
 │   └── generate_training_summary.py
+├── .github/workflows/     # CI: esegue i test su ogni push/PR (tests.yml)
 ├── COMPLIANCE.md          # mappatura GDPR / AI Act / Direttiva Copyright (+ .it.md)
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 162 unit test, nessuna dipendenza pesante
-├── main.py              # CLI: run, review, stats
+├── tests/               # 202 unit test, nessuna dipendenza pesante
+├── main.py              # CLI: init, discover-seeds, run, merge, review, stats
+├── pyproject.toml         # packaging: `pip install -e .` -> comando `scrapellm`
 ├── requirements.txt
 └── LICENSE              # MIT
 ```
