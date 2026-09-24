@@ -85,6 +85,36 @@ class TestPhoneNumbers(unittest.TestCase):
         self.assertNotRegex(redacted, r"\[REDACTED_PHONE\]\d")
         self.assertNotRegex(redacted, r"\d\[REDACTED_PHONE\]")
 
+    def test_does_not_bridge_across_newline_into_unrelated_number(self):
+        # Regression found scraping docs.python.org: a version-history
+        # table has "Derived from: 1.2" on one line and "Year: 1995-1999"
+        # on the next. The old regex's separator class was \s (matches
+        # newlines too), so it read "2\n1995-1999" as a single 9-digit
+        # "phone number" -- swallowing the whole next table cell into the
+        # redaction. Separators must be intra-line only ([ \t]).
+        text = "1.3 thru 1.5.2\n1.2\n1995-1999\nCNRI\nyes"
+        redacted, counts = redact_pii(text)
+        self.assertEqual(counts["PHONE"], 0)
+        self.assertIn("1995-1999", redacted)
+        self.assertIn("1.2", redacted)
+
+    def test_does_not_redact_proquest_document_id(self):
+        # Real Wikipedia reference: "ProQuest 2028196789." -- a document
+        # id from the ProQuest database, same shape as a phone number.
+        text = "in Georgetown Journal of International Affairs. ProQuest 2028196789."
+        redacted, counts = redact_pii(text)
+        self.assertEqual(counts["PHONE"], 0)
+        self.assertIn("2028196789", redacted)
+
+    def test_does_not_redact_jstor_or_pmid_or_hdl_id(self):
+        for text in (
+            "disponibile su JSTOR 40213851 (consultato il 2024).",
+            "PMID 34567890123, ricerca pubblicata nel 2020.",
+            "hdl 11858 123456789 per l'accesso al documento.",
+        ):
+            redacted, counts = redact_pii(text)
+            self.assertEqual(counts["PHONE"], 0, msg=f"falso positivo su: {text!r}")
+
 
 class TestCreditCardNumbers(unittest.TestCase):
     def test_does_not_redact_isbn_with_dash_prefix_before_keyword_reach(self):

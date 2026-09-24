@@ -41,20 +41,33 @@ IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 # groups below, leaving stray leftover digits next to the redaction
 # marker instead of either redacting the whole thing or none of it.
 CREDIT_CARD_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+# Separators are space/tab only ([ \t], NOT the full \s class): \s also
+# matches newlines, which let this regex bridge across unrelated table
+# cells or lines (e.g. a version fragment on one line plus a year range
+# on the next -- "1.2\n1995-1999" -- got read as one 9-digit "phone
+# number", swallowing the whole next line into the redaction). A real
+# phone number is always written on a single line, so restricting to
+# intra-line separators only removes that whole class of false positive
+# without affecting genuine matches (which never spanned lines anyway).
 PHONE_CANDIDATE = re.compile(
-    r"(?<!\d)(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}(?!\d)"
+    r"(?<!\d)(?:\+?\d{1,3}[ \t.-]?)?(?:\(?\d{2,4}\)?[ \t.-]?)?\d{3,4}[ \t.-]?\d{3,4}(?!\d)"
 )
 
 # Bibliographic/identifier keywords that commonly appear shortly before
 # a long number in encyclopedic and academic text (DOI, ISSN, ISBN,
 # arXiv ids, patent application numbers, ORCID/ISNI researcher/author
-# ids). Deliberately searched ANYWHERE in the lookback window rather
+# ids, and common academic database/repository identifiers --
+# ProQuest, JSTOR, PubMed (PMID), Handle System (hdl) -- found the same
+# way ProQuest was: a real Wikipedia reference footer with a document
+# id from one of these systems, structurally identical to a phone
+# number once the keyword context isn't recognized).
+# Deliberately searched ANYWHERE in the lookback window rather
 # than anchored immediately before the match: a real citation reads
 # "DOI: 10.1016/j.patter.2024.101074" or "ISBN 978-0-XXX-XXXXX-X", with
 # a journal path or prefix digits sitting between the keyword and the
 # actual number, so requiring strict adjacency misses almost every real
 # case. Checked case-insensitively.
-_CITATION_CONTEXT_RE = re.compile(r"(doi|issn|isbn|arxiv|uibm|orcid|isni)", re.IGNORECASE)
+_CITATION_CONTEXT_RE = re.compile(r"(doi|issn|isbn|arxiv|uibm|orcid|isni|proquest|jstor|pmid|hdl)", re.IGNORECASE)
 
 # How far back to look for a citation keyword -- long enough to cover
 # "DOI\n:\n10.1016/j.compbiomed." (journal abbreviations vary in length)

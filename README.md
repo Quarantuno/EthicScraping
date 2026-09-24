@@ -38,8 +38,11 @@ review pipeline — not just into the final model's prompt.
   optionally filters by detected language, **redacts personal data**
   (emails, phone numbers, IBANs, IPs, credit-card-like numbers via
   regex, with Luhn-checksum validation and citation-keyword awareness
-  so DOIs/ISSNs/patent numbers in encyclopedic text aren't misflagged
-  as credit cards or phone numbers; optionally also names and places
+  so DOIs/ISSNs/patent/ProQuest/JSTOR/PMID/Handle numbers in encyclopedic
+  and academic text aren't misflagged as credit cards or phone numbers,
+  and phone-number matching never spans a line break, so an unrelated
+  number on the next line (e.g. the next cell of a table) can't get
+  swept into the same false match; optionally also names and places
   via NER, see below),
   deduplicates content (both exact hashing and near-duplicates via
   SimHash, matched through a banded LSH index so lookups don't scan the
@@ -244,7 +247,7 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-157 tests cover the pure logic of the scraper (including retry/backoff,
+160 tests cover the pure logic of the scraper (including retry/backoff,
 Content-Type filtering, and license detection across all its fallback
 paths, with `requests.get` mocked), pipeline (including the text-quality
 heuristics, language-detection degradation path, and a correctness
@@ -297,7 +300,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 157 unit tests, no heavy dependencies
+├── tests/                # 160 unit tests, no heavy dependencies
 ├── main.py               # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE                # MIT
