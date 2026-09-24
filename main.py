@@ -2,6 +2,7 @@
 """ScrapeLLM CLI.
 
 Uso tipico:
+    python main.py init                          # crea config/sources.yaml guidato
     python main.py run --config config/sources.yaml
     python main.py run --config config/sources.yaml --verbose
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 
 import click
@@ -32,6 +34,91 @@ from pipeline.dataset_stats import compute_stats, render_text as render_stats_te
 def load_config(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def validate_config(cfg: dict) -> list[str]:
+    """Upfront validation of a parsed sources.yaml config.
+
+    Returns a list of human-readable error strings (empty if the config
+    looks usable). Shared between `init` (to confirm what it just wrote
+    is actually usable) and `run` (to fail fast with a clear message
+    instead of a confusing exception deep inside the pipeline).
+    """
+    errors: list[str] = []
+    if not isinstance(cfg, dict):
+        return ["Il file di configurazione non contiene un oggetto YAML valido."]
+
+    project = cfg.get("project") or {}
+    user_agent = project.get("user_agent")
+    if not user_agent:
+        errors.append(
+            "Manca 'project.user_agent': serve un User-Agent onesto con un "
+            "contatto reale (email o URL del progetto)."
+        )
+    elif "tuo-email@example.com" in user_agent:
+        errors.append(
+            "'project.user_agent' e' ancora il placeholder dell'esempio: "
+            "mettici un contatto reale prima di lanciare uno scraping vero."
+        )
+
+    seeds = cfg.get("seeds")
+    if not seeds:
+        errors.append("Nessun seed URL trovato in 'seeds': non c'e' niente da scaricare.")
+    elif not isinstance(seeds, list):
+        errors.append("'seeds' deve essere una lista di URL.")
+    else:
+        for s in seeds:
+            if not isinstance(s, str) or not s.startswith(("http://", "https://")):
+                errors.append(f"Seed non valido (deve essere un URL http/https): {s!r}")
+
+    deny_domains = cfg.get("deny_domains")
+    if deny_domains is not None and not isinstance(deny_domains, list):
+        errors.append("'deny_domains' deve essere una lista (anche vuota: []).")
+
+    crawl_cfg = cfg.get("crawl") or {}
+    max_pages = crawl_cfg.get("max_pages_per_domain")
+    if max_pages is not None and (not isinstance(max_pages, int) or max_pages <= 0):
+        errors.append("'crawl.max_pages_per_domain' deve essere un intero positivo.")
+
+    return errors
+
+
+# --- Personalizzazione di config/sources.example.yaml per `init` ----------
+#
+# Sostituzioni testuali mirate invece di un giro completo yaml.safe_load +
+# yaml.dump: l'esempio e' pieno di commenti esplicativi che un dump
+# perderebbe silenziosamente. Se il testo dell'esempio cambia senza
+# aggiornare questi pattern, la sostituzione semplicemente non scatta
+# (nessun errore) -- da qui il test dedicato in tests/test_cli.py che
+# verifica che la sostituzione avvenga davvero.
+
+_EXAMPLE_PROJECT_NAME_RE = re.compile(r'name:\s*"esempio-dataset"')
+_EXAMPLE_UA_RE = re.compile(
+    r'user_agent:\s*"ScrapeLLM-Bot/0\.1 \(\+https://github\.com/tuo-utente/ScrapeLLM; '
+    r'contatto: tuo-email@example\.com\)"'
+)
+_EXAMPLE_SEEDS_BLOCK_RE = re.compile(
+    r"seeds:\n"
+    r"  - https://it\.wikipedia\.org/wiki/Intelligenza_artificiale\n"
+    r"  - https://it\.wikipedia\.org/wiki/Etica_dei_dati\n"
+)
+
+
+def _render_config_from_example(example_text: str, project_name: str | None,
+                                 user_agent: str | None, first_seed: str | None) -> str:
+    """Returns example_text with project name / user agent / first seed
+    substituted in, keeping every comment line untouched. Any argument
+    left as None/empty skips that substitution (defaults from the
+    example are kept as-is)."""
+    text = example_text
+    if project_name:
+        text = _EXAMPLE_PROJECT_NAME_RE.sub(f'name: "{project_name}"', text, count=1)
+    if user_agent:
+        escaped = user_agent.replace('"', '\\"')
+        text = _EXAMPLE_UA_RE.sub(f'user_agent: "{escaped}"', text, count=1)
+    if first_seed:
+        text = _EXAMPLE_SEEDS_BLOCK_RE.sub(f"seeds:\n  - {first_seed}\n", text, count=1)
+    return text
 
 
 def _default_state_path(dataset_path: str) -> str:
@@ -56,6 +143,74 @@ def cli():
 
 
 @cli.command()
+@click.option("--config", "config_path", default="config/sources.yaml",
+              help="Percorso dove scrivere il file di configurazione (default: config/sources.yaml)")
+@click.option("--example", "example_path", default="config/sources.example.yaml",
+              help="Percorso del file di esempio da cui partire")
+@click.option("--force", is_flag=True, help="Sovrascrive il file di destinazione se esiste gia'")
+@click.option("--non-interactive", is_flag=True,
+              help="Copia l'esempio cosi' com'e' senza fare domande (utile da script/CI)")
+def init(config_path: str, example_path: str, force: bool, non_interactive: bool):
+    """Crea config/sources.yaml partendo dall'esempio, con qualche domanda
+    rapida per personalizzarlo (nome progetto, User-Agent, primo seed).
+
+    Le righe di commento esplicative dell'esempio vengono mantenute cosi'
+    come sono: il file scritto resta pensato per essere rifinito a mano.
+    """
+    if not os.path.exists(example_path):
+        click.echo(f"File di esempio non trovato: {example_path}", err=True)
+        sys.exit(1)
+
+    if os.path.exists(config_path) and not force:
+        click.echo(
+            f"{config_path} esiste gia'. Usa --force per sovrascriverlo, "
+            "o modificalo a mano.", err=True,
+        )
+        sys.exit(1)
+
+    with open(example_path, "r", encoding="utf-8") as f:
+        example_text = f.read()
+
+    if non_interactive:
+        project_name = user_agent = first_seed = None
+    else:
+        click.echo("Qualche domanda rapida per personalizzare config/sources.yaml")
+        click.echo("(premi Invio per tenere il default suggerito tra parentesi).\n")
+        project_name = click.prompt("Nome del progetto/dataset", default="esempio-dataset")
+        click.echo(
+            "\nUser-Agent: identificati onestamente con un contatto reale "
+            "(email o URL del progetto) -- un User-Agent anonimo o che finge "
+            "di essere un browser e' una pratica scorretta verso i siti che visiti."
+        )
+        default_ua = ('ScrapeLLM-Bot/0.1 (+https://github.com/tuo-utente/ScrapeLLM; '
+                      'contatto: tuo-email@example.com)')
+        user_agent = click.prompt("User-Agent completo", default=default_ua)
+        first_seed = click.prompt(
+            "URL del primo seed da cui partire (vuoto = tieni gli esempi predefiniti)",
+            default="", show_default=False,
+        )
+
+    new_text = _render_config_from_example(example_text, project_name, user_agent, first_seed)
+
+    dest_dir = os.path.dirname(config_path)
+    if dest_dir:
+        os.makedirs(dest_dir, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(new_text)
+
+    click.echo(f"\nScritto {config_path}.")
+
+    cfg = yaml.safe_load(new_text)
+    errors = validate_config(cfg)
+    if errors:
+        click.echo("\nDa sistemare a mano prima di lanciare 'run':")
+        for e in errors:
+            click.echo(f"  - {e}")
+    else:
+        click.echo(f"Configurazione valida. Puoi lanciare: python main.py run --config {config_path}")
+
+
+@cli.command()
 @click.option("--config", "config_path", required=True, help="Percorso al file YAML di configurazione")
 @click.option("--verbose", is_flag=True, help="Log dettagliati")
 @click.option("--reset-state", is_flag=True,
@@ -67,6 +222,13 @@ def run(config_path: str, verbose: bool, reset_state: bool):
 
     cfg = load_config(config_path)
 
+    errors = validate_config(cfg)
+    if errors:
+        for e in errors:
+            logger.error(e)
+        logger.error("Puoi generare una configurazione di partenza valida con 'python main.py init'.")
+        sys.exit(1)
+
     project = cfg.get("project", {})
     output_cfg = cfg.get("output", {})
     politeness_cfg = cfg.get("politeness", {})
@@ -75,16 +237,6 @@ def run(config_path: str, verbose: bool, reset_state: bool):
     deny_domains = cfg.get("deny_domains", [])
 
     user_agent = project.get("user_agent")
-    if not user_agent or "tuo-email@example.com" in user_agent:
-        logger.error(
-            "Configura un User-Agent onesto con un contatto reale in "
-            "'project.user_agent' prima di lanciare uno scraping vero."
-        )
-        sys.exit(1)
-
-    if not seeds:
-        logger.error("Nessun seed URL trovato in 'seeds'. Niente da fare.")
-        sys.exit(1)
 
     fetcher = EthicalFetcher(
         user_agent=user_agent,
