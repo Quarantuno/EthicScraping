@@ -26,6 +26,7 @@ import yaml
 from scraper.fetcher import EthicalFetcher
 from scraper.crawler import Crawler
 from scraper.crawl_state import CrawlState
+from scraper.sitemap import SitemapFetcher
 from pipeline.dataset_writer import DatasetWriter
 from pipeline.review import ReviewSession
 from pipeline.dataset_stats import compute_stats, render_text as render_stats_text
@@ -208,6 +209,70 @@ def init(config_path: str, example_path: str, force: bool, non_interactive: bool
             click.echo(f"  - {e}")
     else:
         click.echo(f"Configurazione valida. Puoi lanciare: python main.py run --config {config_path}")
+
+
+@cli.command("discover-seeds")
+@click.option("--sitemap", "sitemap_url", required=True,
+              help="URL della sitemap (anche un sitemap index, cioe' una sitemap che elenca altre sitemap)")
+@click.option("--config", "config_path", default=None,
+              help="Config YAML da cui leggere lo User-Agent onesto (project.user_agent), se non passato con --user-agent")
+@click.option("--user-agent", "user_agent", default=None, help="User-Agent onesto da usare per il fetch")
+@click.option("--limit", type=int, default=None, help="Numero massimo di URL da mostrare/scrivere")
+@click.option("--contains", "contains_filter", default=None,
+              help="Tieni solo gli URL che contengono questa sottostringa (es. '/blog/')")
+@click.option("--output", "output_path", default=None,
+              help="Se indicato, scrive gli URL trovati come blocco 'seeds:' YAML in questo file invece di stamparli")
+@click.option("--verbose", is_flag=True, help="Log dettagliati")
+def discover_seeds(sitemap_url: str, config_path: str, user_agent: str, limit: int,
+                    contains_filter: str, output_path: str, verbose: bool):
+    """Scopre URL candidati come seed leggendo una sitemap.xml.
+
+    Non tocca config/sources.yaml automaticamente: stampa una lista (o la
+    scrive su file con --output) che poi scegli tu cosa tenere e incollare
+    a mano in 'seeds:'. Rispetta comunque robots.txt e il rate limiting
+    come ogni altro fetch di questo progetto -- una sitemap index puo'
+    elencare decine di sotto-sitemap.
+    """
+    setup_logging(verbose)
+    logger = logging.getLogger("scrapellm.cli")
+
+    if not user_agent and config_path:
+        cfg = load_config(config_path)
+        user_agent = (cfg.get("project") or {}).get("user_agent")
+    if not user_agent:
+        click.echo(
+            "Serve un User-Agent onesto: passalo con --user-agent, oppure "
+            "--config per leggerlo da project.user_agent.", err=True,
+        )
+        sys.exit(1)
+    if "tuo-email@example.com" in user_agent:
+        click.echo("Quello User-Agent e' ancora il placeholder dell'esempio.", err=True)
+        sys.exit(1)
+
+    fetcher = SitemapFetcher(user_agent=user_agent)
+    logger.info("Scarico la sitemap da %s ...", sitemap_url)
+    urls = fetcher.discover(sitemap_url)
+    logger.info("Trovati %d URL nella sitemap.", len(urls))
+
+    if contains_filter:
+        urls = [u for u in urls if contains_filter in u]
+    if limit:
+        urls = urls[:limit]
+
+    if not urls:
+        click.echo("Nessun URL trovato (o tutti scartati dal filtro/robots.txt).")
+        return
+
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("seeds:\n")
+            for u in urls:
+                f.write(f"  - {u}\n")
+        click.echo(f"Scritti {len(urls)} URL in {output_path}.")
+    else:
+        click.echo(f"{len(urls)} URL trovati:\n")
+        for u in urls:
+            click.echo(f"  - {u}")
 
 
 @cli.command()

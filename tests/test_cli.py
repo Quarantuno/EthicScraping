@@ -1,10 +1,10 @@
 """Test per main.py: validate_config (validazione condivisa tra `init` e
-`run`) e la personalizzazione testuale di config/sources.example.yaml
-usata da `init`.
+`run`), la personalizzazione testuale di config/sources.example.yaml
+usata da `init`, e il comando `discover-seeds`.
 """
 import os
-import tempfile
 import unittest
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -163,6 +163,87 @@ class TestInitCommand(unittest.TestCase):
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ["init"])
             self.assertNotEqual(result.exit_code, 0)
+
+
+class TestDiscoverSeedsCommand(unittest.TestCase):
+    def test_requires_a_user_agent(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["discover-seeds", "--sitemap", "https://esempio.it/sitemap.xml"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("User-Agent", result.output)
+
+    def test_rejects_placeholder_user_agent(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "discover-seeds", "--sitemap", "https://esempio.it/sitemap.xml",
+            "--user-agent", "Bot (contatto: tuo-email@example.com)",
+        ])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("placeholder", result.output)
+
+    def test_prints_discovered_urls(self):
+        runner = CliRunner()
+        with patch("main.SitemapFetcher") as MockFetcher:
+            MockFetcher.return_value.discover.return_value = [
+                "https://esempio.it/a", "https://esempio.it/b",
+            ]
+            result = runner.invoke(cli, [
+                "discover-seeds", "--sitemap", "https://esempio.it/sitemap.xml",
+                "--user-agent", "MioBot/1.0 (contatto: me@esempio.it)",
+            ])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("https://esempio.it/a", result.output)
+        self.assertIn("https://esempio.it/b", result.output)
+
+    def test_contains_filter_and_limit_are_applied(self):
+        runner = CliRunner()
+        with patch("main.SitemapFetcher") as MockFetcher:
+            MockFetcher.return_value.discover.return_value = [
+                "https://esempio.it/blog/1", "https://esempio.it/blog/2",
+                "https://esempio.it/altro",
+            ]
+            result = runner.invoke(cli, [
+                "discover-seeds", "--sitemap", "https://esempio.it/sitemap.xml",
+                "--user-agent", "MioBot/1.0 (contatto: me@esempio.it)",
+                "--contains", "/blog/", "--limit", "1",
+            ])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("1 URL trovati", result.output)
+        self.assertIn("https://esempio.it/blog/1", result.output)
+        self.assertNotIn("altro", result.output)
+
+    def test_output_flag_writes_seeds_yaml_block(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch("main.SitemapFetcher") as MockFetcher:
+                MockFetcher.return_value.discover.return_value = ["https://esempio.it/pagina"]
+                result = runner.invoke(cli, [
+                    "discover-seeds", "--sitemap", "https://esempio.it/sitemap.xml",
+                    "--user-agent", "MioBot/1.0 (contatto: me@esempio.it)",
+                    "--output", "found.yaml",
+                ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open("found.yaml", encoding="utf-8") as f:
+                written = f.read()
+            self.assertEqual(written, "seeds:\n  - https://esempio.it/pagina\n")
+
+    def test_config_flag_reads_user_agent_from_yaml(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("cfg.yaml", "w", encoding="utf-8") as f:
+                f.write('project:\n  user_agent: "MioBot/1.0 (contatto: me@esempio.it)"\n')
+            with patch("main.SitemapFetcher") as MockFetcher:
+                MockFetcher.return_value.discover.return_value = []
+                result = runner.invoke(cli, [
+                    "discover-seeds", "--sitemap", "https://esempio.it/sitemap.xml",
+                    "--config", "cfg.yaml",
+                ])
+            self.assertEqual(result.exit_code, 0, result.output)
+            MockFetcher.assert_called_once()
+            self.assertEqual(
+                MockFetcher.call_args.kwargs["user_agent"],
+                "MioBot/1.0 (contatto: me@esempio.it)",
+            )
 
 
 class TestRunUsesSharedValidation(unittest.TestCase):
