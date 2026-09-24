@@ -53,31 +53,48 @@ PHONE_CANDIDATE = re.compile(
     r"(?<!\d)(?:\+?\d{1,3}[ \t.-]?)?(?:\(?\d{2,4}\)?[ \t.-]?)?\d{3,4}[ \t.-]?\d{3,4}(?!\d)"
 )
 
-# Bibliographic/identifier keywords that commonly appear shortly before
-# a long number in encyclopedic and academic text (DOI, ISSN, ISBN,
-# arXiv ids, patent application numbers, ORCID/ISNI researcher/author
-# ids, and common academic database/repository identifiers --
-# ProQuest, JSTOR, PubMed (PMID), Handle System (hdl) -- found the same
-# way ProQuest was: a real Wikipedia reference footer with a document
-# id from one of these systems, structurally identical to a phone
-# number once the keyword context isn't recognized).
-# Deliberately searched ANYWHERE in the lookback window rather
-# than anchored immediately before the match: a real citation reads
-# "DOI: 10.1016/j.patter.2024.101074" or "ISBN 978-0-XXX-XXXXX-X", with
-# a journal path or prefix digits sitting between the keyword and the
-# actual number, so requiring strict adjacency misses almost every real
-# case. Checked case-insensitively.
-_CITATION_CONTEXT_RE = re.compile(r"(doi|issn|isbn|arxiv|uibm|orcid|isni|proquest|jstor|pmid|hdl)", re.IGNORECASE)
+# Bibliographic/identifier keywords that commonly appear near a long
+# number in encyclopedic and academic text: DOI, ISSN, ISBN, arXiv ids,
+# patent application numbers, ORCID/ISNI researcher/author ids, academic
+# database/repository ids (ProQuest, JSTOR, PMID, Handle System), and
+# library authority-control ids (LCCN, GND, VIAF, SBN, BNF, NDL, BNE,
+# J9U -- the systems listed in Wikipedia's "Controllo di autorita'"/
+# "Authority control" sidebar template), plus Bibcode/PMC from journal
+# citation footers. Each addition here was found the same way: a real
+# page (a Wikipedia reference list, an authority-control box) with an
+# identifier from that system, structurally identical to a phone number
+# or credit card once the keyword isn't recognized.
+# Checked in BOTH directions (see _preceded_by/_followed_by below), not
+# anchored to immediate adjacency: a real citation reads "DOI:
+# 10.1016/j.patter.2024.101074" (keyword before, with a journal path in
+# between) but also "374 20150363. Bibcode: ... doi: ... PMID: ..."
+# (the identifying keywords all come AFTER the number, cross-referencing
+# the same citation) or "LCCN (EN) sh85037298" (keyword immediately
+# before). Checked case-insensitively.
+_CITATION_CONTEXT_RE = re.compile(r"(doi|issn|isbn|arxiv|uibm|orcid|isni|proquest|jstor|pmid|hdl|lccn|gnd|viaf|sbn|bnf|ndl|bne|j9u|bibcode|pmc)", re.IGNORECASE)
 
-# How far back to look for a citation keyword -- long enough to cover
-# "DOI\n:\n10.1016/j.compbiomed." (journal abbreviations vary in length)
-# without being so long it starts matching unrelated earlier text.
+# How far to look for a citation keyword (in either direction) -- long
+# enough to cover "DOI\n:\n10.1016/j.compbiomed." (journal abbreviations
+# vary in length) without being so long it starts matching unrelated
+# text several sentences away.
 _CITATION_CONTEXT_WINDOW = 60
 
 
 def _preceded_by_citation_context(full_text: str, start: int,
                                    window: int = _CITATION_CONTEXT_WINDOW) -> bool:
     return bool(_CITATION_CONTEXT_RE.search(full_text[max(0, start - window):start]))
+
+
+def _followed_by_citation_context(full_text: str, end: int,
+                                   window: int = _CITATION_CONTEXT_WINDOW) -> bool:
+    """Same idea as _preceded_by_citation_context but looking forward:
+    a citation's identifying keywords don't always come before the
+    number. A real example: "...374 20150363. Bibcode: 2016RSPTA...
+    doi: 10.1098/rsta.2016.0360. ISSN 1364-503X. PMID 28336805." -- the
+    article number ("20150363") has no keyword before it at all, only a
+    cluster of them (Bibcode/doi/ISSN/PMID) right after, all describing
+    the same citation."""
+    return bool(_CITATION_CONTEXT_RE.search(full_text[end:end + window]))
 
 
 def _preceded_by_equals_sign(full_text: str, start: int) -> bool:
@@ -111,6 +128,8 @@ def _is_real_credit_card(match: "re.Match[str]") -> bool:
         return False
     if _preceded_by_citation_context(match.string, match.start()):
         return False
+    if _followed_by_citation_context(match.string, match.end()):
+        return False
     if _preceded_by_equals_sign(match.string, match.start()):
         return False
     return _luhn_valid(digits)
@@ -121,6 +140,8 @@ def _is_real_phone(match: "re.Match[str]") -> bool:
     if len(digits) < 9 or len(digits) > 13:
         return False
     if _preceded_by_citation_context(match.string, match.start()):
+        return False
+    if _followed_by_citation_context(match.string, match.end()):
         return False
     if _preceded_by_equals_sign(match.string, match.start()):
         return False

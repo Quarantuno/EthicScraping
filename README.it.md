@@ -40,12 +40,15 @@ raccolta e revisione, non solo nel prompt del modello finale.
   i dati personali** (email, telefoni, IBAN, IP, numeri tipo carta di
   credito via regex, con validazione checksum di Luhn e riconoscimento
   di parole-chiave bibliografiche cosi' che DOI/ISSN/numeri di
-  brevetto/ProQuest/JSTOR/PMID/Handle in testo enciclopedico e accademico
-  non vengano scambiati per carte di credito o numeri di telefono, e il
-  riconoscimento dei telefoni non scavalca mai un a-capo, cosi' un numero
-  non correlato sulla riga successiva (es. la cella dopo in una tabella)
-  non puo' finire nello stesso falso positivo; opzionalmente anche nomi
-  propri e luoghi via NER, vedi sotto), deduplica i contenuti (sia hash esatto sia quasi-duplicati
+  brevetto/ProQuest/JSTOR/PMID/Handle/controllo di autorita' bibliotecario
+  (LCCN/GND/VIAF/...) in testo enciclopedico e accademico non vengano
+  scambiati per carte di credito o numeri di telefono -- controllato sia
+  prima che dopo il match, perche' in una citazione di rivista le
+  parole-chiave (Bibcode/doi/PMID/...) a volte vengono tutte dopo il
+  numero, non prima -- e il riconoscimento dei telefoni non scavalca mai
+  un a-capo, cosi' un numero non correlato sulla riga successiva (es. la
+  cella dopo in una tabella) non puo' finire nello stesso falso positivo;
+  opzionalmente anche nomi propri e luoghi via NER, vedi sotto), deduplica i contenuti (sia hash esatto sia quasi-duplicati
   via SimHash, cercati tramite un indice LSH a bande cosi' che il
   confronto non scandisca tutto il corpus a ogni documento), e scrive
   ogni record in JSONL con provenienza completa
@@ -257,7 +260,7 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-160 test coprono la logica pura di scraper (incluso retry/backoff, filtro
+162 test coprono la logica pura di scraper (incluso retry/backoff, filtro
 Content-Type, e il rilevamento licenza in tutti i suoi percorsi di
 fallback, con `requests.get` mockato), pipeline (incluse le euristiche di
 qualita' del testo, il degrado del rilevamento lingua, e una verifica di
@@ -311,7 +314,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 160 unit test, nessuna dipendenza pesante
+├── tests/               # 162 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: run, review, stats
 ├── requirements.txt
 └── LICENSE              # MIT

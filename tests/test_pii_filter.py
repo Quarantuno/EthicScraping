@@ -115,6 +115,32 @@ class TestPhoneNumbers(unittest.TestCase):
             redacted, counts = redact_pii(text)
             self.assertEqual(counts["PHONE"], 0, msg=f"falso positivo su: {text!r}")
 
+    def test_does_not_redact_authority_control_ids(self):
+        # Regression found on it.wikipedia.org: the "Controllo di
+        # autorita'" / "Authority control" sidebar box lists ids from
+        # several library/registry systems back to back (LCCN, GND, BNE,
+        # J9U, ...); the LCCN one in particular ("sh85037298") was
+        # redacted as a phone number because none of those system names
+        # were recognized as citation context.
+        text = ("Controllo di autorita\nLCCN\n(\nEN\n)\nsh85037298\n·\n"
+                "GND\n(\nDE\n)\n4011134-9\n·\nVIAF\n312471120")
+        redacted, counts = redact_pii(text)
+        self.assertEqual(counts["PHONE"], 0)
+        self.assertIn("sh85037298", redacted)
+
+    def test_does_not_redact_number_followed_by_citation_keywords(self):
+        # Regression found on en.wikipedia.org: a journal citation where
+        # the article number has NO keyword before it, only a cluster of
+        # them (Bibcode/doi/ISSN/PMC/PMID) right after, all describing
+        # the same reference -- "374 20150363. Bibcode: ... doi: ...".
+        # The old check only looked backward from the match.
+        text = ("Philosophical Transactions of the Royal Society A.\n374\n"
+                "20150363.\nBibcode\n:\n2016RSPTA.37460360F\n.\ndoi\n:\n"
+                "10.1098/rsta.2016.0360\n.\nISSN\n1364-503X\n.\nPMC\n5124072\n.")
+        redacted, counts = redact_pii(text)
+        self.assertEqual(counts["PHONE"], 0)
+        self.assertIn("20150363", redacted)
+
 
 class TestCreditCardNumbers(unittest.TestCase):
     def test_does_not_redact_isbn_with_dash_prefix_before_keyword_reach(self):
