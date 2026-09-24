@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrapellm"
+version = "0.2.0"
+description = "Open source, ethical web-scraping and dataset-building pipeline for training AI on responsible data use (GDPR / EU Copyright Directive / AI Act aware)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Quarantuno" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "urllib3>=2.0",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "pandas>=2.0",
+    "tldextract>=5.1",
+]
+
+# Optional extras -- the pipeline degrades gracefully without these (a
+# log warning, never a crash), so they stay optional rather than core
+# dependencies. See README.md "PII: two layers" / language detection.
+[project.optional-dependencies]
+ner = ["spacy>=3.7"]
+lang = ["langdetect>=1.0.9"]
+full = ["scrapellm[ner,lang]"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Repository = "https://github.com/Quarantuno/EthicScraping"
+
+[project.scripts]
+scrapellm = "main:cli"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["scraper*", "pipeline*", "compliance*"]
