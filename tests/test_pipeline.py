@@ -18,6 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.text_extractor import extract_text
 from pipeline.pii_filter import redact_pii
 from pipeline.ner_pii import redact_named_entities, is_available, reset_cache
+from pipeline.presidio_pii import (
+    redact_with_presidio,
+    is_available as presidio_is_available,
+    reset_cache as reset_presidio_cache,
+)
 from pipeline.dedup import Deduplicator, content_hash, simhash, hamming_distance
 from pipeline.dataset_writer import DatasetWriter
 from scraper.license_detector import detect_license
@@ -83,6 +88,34 @@ class TestNerPii(unittest.TestCase):
         text = "Mario Rossi vive a Milano."
         redacted, counts = redact_named_entities(text, model_name="un-modello-che-non-esiste")
         self.assertEqual(redacted, text)
+        self.assertEqual(counts, {})
+
+
+class TestPresidioPii(unittest.TestCase):
+    """presidio-analyzer e' una dipendenza opzionale e non e' installata
+    in questo ambiente: come per TestNerPii, qui verifichiamo che il
+    degrado sia sicuro (nessuna eccezione, testo invariato) quando non
+    e' disponibile -- esattamente lo scenario di chi non ha fatto
+    `pip install presidio-analyzer`."""
+
+    def setUp(self):
+        reset_presidio_cache()
+
+    def test_reports_unavailable_without_presidio_or_model(self):
+        self.assertFalse(presidio_is_available(spacy_model="un-modello-che-non-esiste"))
+
+    def test_degrades_to_noop_when_unavailable(self):
+        text = "Mario Rossi e' di origini francesi."
+        redacted, counts = redact_with_presidio(text, spacy_model="un-modello-che-non-esiste")
+        self.assertEqual(redacted, text)
+        self.assertEqual(counts, {})
+
+    def test_empty_text_short_circuits_without_loading_anything(self):
+        # Non deve nemmeno tentare di caricare il motore per una stringa
+        # vuota -- comportamento verificabile a prescindere dal fatto che
+        # presidio-analyzer sia installato o meno in questo ambiente.
+        redacted, counts = redact_with_presidio("", spacy_model="un-modello-che-non-esiste")
+        self.assertEqual(redacted, "")
         self.assertEqual(counts, {})
 
 
@@ -191,6 +224,18 @@ class TestDatasetWriter(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         parsed = json.loads(lines[0])
         self.assertEqual(parsed["id"], record["id"])
+
+    def test_use_presidio_degrades_safely_when_unavailable(self):
+        # presidio-analyzer isn't installed in this environment, so this
+        # exercises the real wiring in DatasetWriter.process() end to
+        # end: use_presidio=True must not crash or change behavior when
+        # the optional dependency is missing, same as use_ner already
+        # does for spaCy.
+        writer = DatasetWriter(self.output_path, min_word_count=10,
+                                use_presidio=True, presidio_model="un-modello-che-non-esiste")
+        record = writer.process(self._fake_result())
+        self.assertIsNotNone(record)
+        self.assertEqual(record["pii_redactions"].get("EMAIL"), 1)
 
     def test_skips_duplicate_pages(self):
         writer = DatasetWriter(self.output_path, min_word_count=10)

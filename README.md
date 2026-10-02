@@ -71,7 +71,7 @@ review pipeline — not just into the final model's prompt.
 open source base model. See `training/README.md` for details — **don't
 run it on unreviewed data**.
 
-## PII: two layers
+## PII: three layers
 
 1. **Regex (always on)**: emails, phone numbers, IBANs, IPs,
    credit-card-like numbers — structural patterns, fast, no heavy
@@ -86,10 +86,35 @@ run it on unreviewed data**.
    then set `output.use_ner: true` in `config/sources.yaml`. If spaCy or
    the model aren't installed, the system falls back on its own to
    regex-only redaction (with a log warning), without breaking.
+3. **Presidio (optional)**: Microsoft Presidio as a third, broader
+   layer, on top of the two above:
+   ```bash
+   pip install presidio-analyzer
+   python -m spacy download it_core_news_sm   # or your language's model
+   ```
+   then set `output.use_presidio: true` in `config/sources.yaml`. Same
+   degrade-to-no-op-with-a-warning behavior if the dependency or model
+   is missing. Its default entity list is deliberately narrow and
+   doesn't just duplicate the layers above: it adds **NRP** (nationality
+   / religion / political affiliation — GDPR Art. 9 special-category
+   data that neither the regex layer nor the NER layer above actually
+   detects) plus **CRYPTO** and **MEDICAL_LICENSE** (rare, low
+   false-positive-risk patterns), and keeps **PERSON**/**LOCATION**
+   (Presidio's context enrichment can catch what bare spaCy NER
+   misses). It deliberately leaves Presidio's own phone/credit-card/
+   IBAN/email/IP recognizers switched off by default: those don't know
+   about this project's citation-keyword context checks (see
+   `pipeline/pii_filter.py`) and would risk reintroducing the exact
+   DOI/ISSN/patent/bibliographic false positives already hunted down and
+   fixed there. It also leaves full dates and URLs off by default —
+   both are too common in encyclopedic/historical text to redact
+   wholesale. See `pipeline/presidio_pii.py` for the complete rationale,
+   and `output.presidio_entities` in `config/sources.example.yaml` if
+   you want to override the list yourself.
 
-Neither layer is an absolute guarantee, especially on higher-risk
-sources (forums, comments, user-generated content): those always need a
-human review pass (`main.py review`) before use.
+None of the three layers is an absolute guarantee, especially on
+higher-risk sources (forums, comments, user-generated content): those
+always need a human review pass (`main.py review`) before use.
 
 ### Evaluation — is the model actually "aware"?
 
@@ -134,7 +159,8 @@ Alternatively, install it as a proper package (`pyproject.toml`,
 `pip install -e .`) and use the `scrapellm` command instead of
 `python main.py` everywhere below (`scrapellm run`, `scrapellm init`,
 ...). Optional extras: `pip install -e ".[ner]"` (spaCy),
-`.[lang]` (langdetect), `.[full]` (both), `.[dev]` (test tooling).
+`.[lang]` (langdetect), `.[presidio]` (Microsoft Presidio), `.[full]`
+(all three), `.[dev]` (test tooling).
 
 ## Usage
 
@@ -171,6 +197,9 @@ Edit `config/sources.yaml`:
   8; see the comments in the file).
 - **`output.use_ner`** / **`ner_model`**: turn on advanced PII redaction
   (requires spaCy, see above).
+- **`output.use_presidio`** / **`presidio_language`** / **`presidio_model`**
+  / **`presidio_entities`**: turn on the third PII layer (requires
+  Microsoft Presidio, see "PII: three layers" above).
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
@@ -306,17 +335,19 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-202 tests cover the pure logic of the scraper (including retry/backoff,
+206 tests cover the pure logic of the scraper (including retry/backoff,
 Content-Type filtering, sitemap/sitemap-index parsing, and license
 detection across all its fallback paths, with `requests.get` mocked),
 pipeline (including the text-quality heuristics, language-detection
-degradation path, and a correctness check of the banded LSH dedup index
-against a brute-force reference), the `init`/`discover-seeds`/`merge`/
-`run` CLI commands end-to-end via `click.testing.CliRunner`, crawl
-resumability, review, and training data prep —
+degradation path, the Presidio PII layer's graceful degradation when
+the dependency is missing, and a correctness check of the banded LSH
+dedup index against a brute-force reference), the `init`/
+`discover-seeds`/`merge`/`run` CLI commands end-to-end via
+`click.testing.CliRunner`, crawl resumability, review, and training
+data prep —
 none require network access or heavy dependencies (torch/spaCy/
-langdetect aren't needed for them to pass; the code degrades correctly
-when those aren't installed).
+langdetect/presidio-analyzer aren't needed for them to pass; the code
+degrades correctly when those aren't installed).
 
 Runs automatically on every push/PR to `main` via GitHub Actions
 (`.github/workflows/tests.yml`) across Python 3.9/3.11/3.12.
@@ -343,6 +374,7 @@ ScrapeLLM/
 │   ├── text_extractor.py
 │   ├── pii_filter.py
 │   ├── ner_pii.py        # advanced PII via NER (optional, spaCy)
+│   ├── presidio_pii.py    # third PII layer (optional, Microsoft Presidio)
 │   ├── dedup.py           # exact hash + SimHash/LSH index for near-duplicates
 │   ├── review.py          # human review (persisted state)
 │   ├── quality_filter.py  # dependency-free text-quality heuristics
@@ -366,7 +398,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 202 unit tests, no heavy dependencies
+├── tests/                # 206 unit tests, no heavy dependencies
 ├── main.py               # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> `scrapellm` command
 ├── requirements.txt

@@ -75,7 +75,7 @@ Cartella `training/`: preparazione dataset per il training e script di
 fine-tuning LoRA su un modello open source. Vedi `training/README.md`
 per i dettagli — **non lanciarlo su dati non revisionati**.
 
-## PII: due livelli
+## PII: tre livelli
 
 1. **Regex (sempre attivo)**: email, telefoni, IBAN, IP, numeri tipo
    carta di credito — pattern strutturali, veloce, nessuna dipendenza
@@ -90,10 +90,36 @@ per i dettagli — **non lanciarlo su dati non revisionati**.
    poi `output.use_ner: true` in `config/sources.yaml`. Se spaCy o il
    modello non sono installati, il sistema degrada da solo alla sola
    redazione regex (con un avviso nei log), senza bloccarsi.
+3. **Presidio (opzionale)**: Microsoft Presidio come terzo livello,
+   sopra ai due precedenti:
+   ```bash
+   pip install presidio-analyzer
+   python -m spacy download it_core_news_sm   # o il modello della tua lingua
+   ```
+   poi `output.use_presidio: true` in `config/sources.yaml`. Stesso
+   degrado morbido (avviso nei log, nessun blocco) se la dipendenza o il
+   modello mancano. La lista di entity type di default e' volutamente
+   mirata, non una semplice duplicazione dei livelli sopra: aggiunge
+   **NRP** (nazionalita' / religione / orientamento politico —
+   categoria "speciale" art. 9 GDPR che ne' il livello regex ne' il NER
+   intercettano) piu' **CRYPTO** e **MEDICAL_LICENSE** (pattern rari, a
+   basso rischio di falsi positivi), e mantiene **PERSON**/**LOCATION**
+   (l'arricchimento contestuale di Presidio puo' individuare casi che il
+   NER "nudo" di spaCy perde). Lascia volutamente disattivati di default
+   i recognizer di Presidio per telefono/carta di credito/IBAN/email/IP:
+   non conoscono il contesto bibliografico di citazione (vedi
+   `pipeline/pii_filter.py`) e rischierebbero di reintrodurre proprio i
+   falsi positivi DOI/ISSN/brevetti/bibliografici gia' risolti li'.
+   Lascia disattivati anche date complete e URL — troppo comuni su testo
+   enciclopedico/storico per essere un default sensato. Vedi
+   `pipeline/presidio_pii.py` per la motivazione completa, e
+   `output.presidio_entities` in `config/sources.example.yaml` per
+   personalizzare la lista.
 
-Nessuno dei due e' una garanzia assoluta, specialmente su fonti ad alto
-rischio (forum, commenti, contenuti generati dagli utenti): per quelle
-serve sempre una revisione umana (`main.py review`) prima dell'uso.
+Nessuno dei tre livelli e' una garanzia assoluta, specialmente su fonti
+ad alto rischio (forum, commenti, contenuti generati dagli utenti): per
+quelle serve sempre una revisione umana (`main.py review`) prima
+dell'uso.
 
 ### Valutazione — il modello e' davvero "consapevole"?
 
@@ -141,8 +167,8 @@ In alternativa, installalo come pacchetto vero e proprio
 (`pyproject.toml`, `pip install -e .`) e usa il comando `scrapellm` al
 posto di `python main.py` in tutto quello che segue (`scrapellm run`,
 `scrapellm init`, ...). Extra opzionali: `pip install -e ".[ner]"`
-(spaCy), `.[lang]` (langdetect), `.[full]` (entrambi), `.[dev]`
-(strumenti per i test).
+(spaCy), `.[lang]` (langdetect), `.[presidio]` (Microsoft Presidio),
+`.[full]` (tutti e tre), `.[dev]` (strumenti per i test).
 
 ## Uso
 
@@ -179,6 +205,9 @@ Modifica `config/sources.yaml`:
   (default 8; vedi i commenti nel file).
 - **`output.use_ner`** / **`ner_model`**: attiva la redazione PII
   avanzata (richiede spaCy, vedi sopra).
+- **`output.use_presidio`** / **`presidio_language`** / **`presidio_model`**
+  / **`presidio_entities`**: attiva il terzo livello PII (richiede
+  Microsoft Presidio, vedi "PII: tre livelli" sopra).
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
@@ -318,18 +347,19 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-202 test coprono la logica pura di scraper (incluso retry/backoff, filtro
+206 test coprono la logica pura di scraper (incluso retry/backoff, filtro
 Content-Type, parsing di sitemap/sitemap-index, e il rilevamento licenza
 in tutti i suoi percorsi di fallback, con `requests.get` mockato),
 pipeline (incluse le euristiche di qualita' del testo, il degrado del
-rilevamento lingua, e una verifica di correttezza dell'indice LSH a
+rilevamento lingua, il degrado morbido del livello PII Presidio quando
+la dipendenza manca, e una verifica di correttezza dell'indice LSH a
 bande per la deduplica contro un confronto di riferimento a forza
 bruta), i comandi CLI `init`/`discover-seeds`/`merge`/`run` end-to-end
 via `click.testing.CliRunner`, ripresa della crawl, revisione e
 preparazione dati per il training —
-nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect non
-servono per farli passare, il codice degrada correttamente quando non
-sono installati).
+nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect/
+presidio-analyzer non servono per farli passare, il codice degrada
+correttamente quando non sono installati).
 
 Gira automaticamente su ogni push/PR a `main` via GitHub Actions
 (`.github/workflows/tests.yml`) su Python 3.9/3.11/3.12.
@@ -356,6 +386,7 @@ ScrapeLLM/
 │   ├── text_extractor.py
 │   ├── pii_filter.py
 │   ├── ner_pii.py       # PII avanzata via NER (opzionale, spaCy)
+│   ├── presidio_pii.py   # terzo livello PII (opzionale, Microsoft Presidio)
 │   ├── dedup.py          # hash esatto + SimHash/indice LSH per i quasi-duplicati
 │   ├── review.py         # revisione umana (stato persistito)
 │   ├── quality_filter.py # euristiche di qualita' del testo, senza dipendenze
@@ -379,7 +410,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 202 unit test, nessuna dipendenza pesante
+├── tests/               # 206 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> comando `scrapellm`
 ├── requirements.txt

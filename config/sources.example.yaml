@@ -27,6 +27,33 @@ output:
   # viene semplicemente ignorato con un avviso nei log.
   use_ner: false
   ner_model: "it_core_news_sm"
+  # Terzo livello di PII detection (oltre a regex sempre attivo e NER
+  # sopra): Microsoft Presidio. Richiede: pip install presidio-analyzer
+  # (e un modello spaCy per presidio_language/presidio_model, stesso
+  # comando di ner_model qui sopra). Se non installato, viene ignorato
+  # con un avviso nei log, come use_ner.
+  #
+  # I tipi redatti di default (presidio_entities: null) sono
+  # deliberatamente mirati a cio' che NON e' gia' coperto altrove:
+  # PERSON/LOCATION (parzialmente ridondanti con use_ner, ma Presidio
+  # puo' individuare casi che il NER "nudo" perde), NRP (nazionalita'/
+  # religione/orientamento politico -- categoria "speciale" art. 9
+  # GDPR, non intercettata ne' da regex ne' da use_ner), CRYPTO e
+  # MEDICAL_LICENSE (pattern rari, basso rischio di falsi positivi).
+  # Di proposito NON include PHONE_NUMBER/CREDIT_CARD/IBAN_CODE/
+  # EMAIL_ADDRESS/IP_ADDRESS (i recognizer di Presidio per questi tipi
+  # non conoscono il contesto bibliografico -- DOI/ISSN/brevetti/
+  # Bibcode/PMID/autorita' bibliotecarie -- che il filtro regex di
+  # questo progetto ha imparato a riconoscere con piu' round di fix su
+  # dati reali: vedi pipeline/pii_filter.py) ne' DATE_TIME/URL (troppo
+  # comuni su testo enciclopedico/storico per essere un default
+  # sensato). Vedi pipeline/presidio_pii.py per i dettagli completi.
+  use_presidio: false
+  presidio_language: "it"
+  presidio_model: "it_core_news_sm"
+  # null = usa i default spiegati sopra; altrimenti una lista esplicita
+  # di nomi di entity type Presidio, es.: ["PERSON", "LOCATION", "DATE_TIME"]
+  presidio_entities: null
   # Rispetta le riserve di diritti per text-and-data-mining (art. 4(3)
   # Direttiva (UE) 2019/790), rilevate via TDMRep (meta tag + file
   # /.well-known/tdmrep.json). Se true (default), scarta le pagine con

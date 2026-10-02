@@ -16,6 +16,7 @@ from scraper.fetcher import FetchResult
 from .text_extractor import extract_text
 from .pii_filter import redact_pii
 from .ner_pii import redact_named_entities
+from .presidio_pii import redact_with_presidio
 from .dedup import Deduplicator, content_hash
 from .quality_filter import compute_quality_metrics, passes_quality_filter
 from .language_detector import detect_language
@@ -25,6 +26,9 @@ class DatasetWriter:
     def __init__(self, output_path: str, min_license_confidence: Optional[str] = None,
                  min_word_count: int = 50, near_duplicate_threshold: Optional[int] = 8,
                  use_ner: bool = False, ner_model: str = "it_core_news_sm",
+                 use_presidio: bool = False, presidio_language: str = "it",
+                 presidio_model: str = "it_core_news_sm",
+                 presidio_entities: Optional[list] = None,
                  respect_tdm_optout: bool = True,
                  use_quality_filter: bool = True, min_alpha_ratio: float = 0.5,
                  min_unique_line_ratio: float = 0.4, max_long_word_ratio: float = 0.05,
@@ -41,6 +45,26 @@ class DatasetWriter:
             spaCy NER, on top of the regex-based redaction. Requires spaCy
             and `ner_model` to be installed; degrades to a no-op (with a
             warning already logged by ner_pii) if they aren't.
+        use_presidio: if True, also redacts entities found by Microsoft
+            Presidio, on top of regex + optional NER. Deliberately
+            conservative defaults (see pipeline/presidio_pii.py for the
+            full rationale): PERSON/LOCATION (overlaps with NER, kept
+            because Presidio's context enrichment can catch what bare
+            spaCy NER misses), NRP (nationality/religion/political
+            affiliation -- GDPR Art. 9 special-category data that
+            nothing else here detects), CRYPTO and MEDICAL_LICENSE
+            (rare, low false-positive risk). Deliberately does NOT
+            enable Presidio's own PHONE_NUMBER/CREDIT_CARD/IBAN_CODE/
+            EMAIL_ADDRESS/IP_ADDRESS by default: those recognizers don't
+            know about this project's citation-keyword context checks
+            (see pii_filter.py) and would risk reintroducing the exact
+            DOI/ISSN/patent/bibliographic false positives already fixed
+            there. Requires presidio-analyzer and a spaCy model for
+            `presidio_language`/`presidio_model`; degrades to a no-op
+            (with a warning already logged by presidio_pii) if they
+            aren't installed.
+        presidio_entities: override the default entity list above (a
+            list of Presidio entity type names). None uses the default.
         respect_tdm_optout: if True (default), DROP pages whose publisher
             reserved text-and-data-mining rights (Art. 4(3) Directive
             2019/790, detected by scraper/tdm_rights.py) UNLESS the page
@@ -72,6 +96,10 @@ class DatasetWriter:
         self.dedup = Deduplicator(near_duplicate_threshold=near_duplicate_threshold)
         self.use_ner = use_ner
         self.ner_model = ner_model
+        self.use_presidio = use_presidio
+        self.presidio_language = presidio_language
+        self.presidio_model = presidio_model
+        self.presidio_entities = presidio_entities
         self.respect_tdm_optout = respect_tdm_optout
         self.use_quality_filter = use_quality_filter
         self.min_alpha_ratio = min_alpha_ratio
@@ -148,6 +176,14 @@ class DatasetWriter:
                 redacted_text, model_name=self.ner_model
             )
             for label, count in ner_counts.items():
+                pii_counts[label] = pii_counts.get(label, 0) + count
+
+        if self.use_presidio:
+            redacted_text, presidio_counts = redact_with_presidio(
+                redacted_text, language=self.presidio_language,
+                spacy_model=self.presidio_model, entities=self.presidio_entities,
+            )
+            for label, count in presidio_counts.items():
                 pii_counts[label] = pii_counts.get(label, 0) + count
 
         if self.dedup.is_duplicate(redacted_text):

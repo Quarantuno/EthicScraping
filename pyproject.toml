@@ -31,11 +31,12 @@ dependencies = [
 
 # Optional extras -- the pipeline degrades gracefully without these (a
 # log warning, never a crash), so they stay optional rather than core
-# dependencies. See README.md "PII: two layers" / language detection.
+# dependencies. See README.md "PII: three layers" / language detection.
 [project.optional-dependencies]
 ner = ["spacy>=3.7"]
 lang = ["langdetect>=1.0.9"]
-full = ["scrapellm[ner,lang]"]
+presidio = ["presidio-analyzer>=2.2"]
+full = ["scrapellm[ner,lang,presidio]"]
 dev = ["pytest>=7.0"]
 
 [project.urls]

@@ -26,3 +26,11 @@ tldextract>=5.1
 # null e nessun filtro viene applicato (degrado morbido, nessun errore).
 #   pip install langdetect
 # langdetect>=1.0.9
+
+# Optional: terzo livello di PII detection via Microsoft Presidio,
+# abilita con output.use_presidio: true in config/sources.yaml. Richiede
+# anche un modello spaCy (vedi use_ner sopra). Degrado morbido (nessun
+# errore, solo un avviso nei log) se non installato. Vedi
+# pipeline/presidio_pii.py per quali entity type vengono redatte e perche'.
+#   pip install presidio-analyzer
+# presidio-analyzer>=2.2
