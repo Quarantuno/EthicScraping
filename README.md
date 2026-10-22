@@ -1,4 +1,4 @@
-# ScrapeLLM
+# EthicScraping - Python Pipeline for Scraping Web Data
 
 *[Leggi questo in italiano](README.it.md)*
 
