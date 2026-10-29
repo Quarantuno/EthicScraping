@@ -391,7 +391,8 @@ langdetect/presidio-analyzer aren't needed for them to pass; the code
 degrades correctly when those aren't installed).
 
 Runs automatically on every push/PR to `main` via GitHub Actions
-(`.github/workflows/tests.yml`) across Python 3.9/3.11/3.12.
+(`.github/workflows/tests.yml`) across Python 3.9 (on Ubuntu 24.04) and
+3.11/3.12/3.13.
 
 An actual scraping run (`python main.py run --config ...`) does need
 outbound network access to the target sites: running it from an

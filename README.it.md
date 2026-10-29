@@ -410,7 +410,8 @@ presidio-analyzer non servono per farli passare, il codice degrada
 correttamente quando non sono installati).
 
 Gira automaticamente su ogni push/PR a `main` via GitHub Actions
-(`.github/workflows/tests.yml`) su Python 3.9/3.11/3.12.
+(`.github/workflows/tests.yml`) su Python 3.9 (su Ubuntu 24.04) e
+3.11/3.12/3.13.
 
 Un run reale di scraping (`python main.py run --config ...`) richiede
 invece una connessione di rete in uscita verso i siti target: se lo

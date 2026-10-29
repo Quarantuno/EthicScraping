@@ -13,16 +13,29 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11", "3.12"]
+        include:
+          # Python 3.9 is end-of-life (Oct 2025) and actions/setup-python
+          # has no 3.9 build for Ubuntu 26.04, which `ubuntu-latest`
+          # became in October 2026. It stays tested on 24.04 because
+          # it's still what some users (and this project's own dev Mac)
+          # run -- see requires-python in pyproject.toml.
+          - python-version: "3.9"
+            os: ubuntu-24.04
+          - python-version: "3.11"
+            os: ubuntu-latest
+          - python-version: "3.12"
+            os: ubuntu-latest
+          - python-version: "3.13"
+            os: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
