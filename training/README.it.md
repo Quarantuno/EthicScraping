@@ -82,6 +82,23 @@ model = PeftModel.from_pretrained(base, "training/output/final_adapter")
 tokenizer = AutoTokenizer.from_pretrained("training/output/final_adapter")
 ```
 
+## 5. (Facoltativo) Valuta la "consapevolezza" sui dati
+
+L'addestramento ha davvero reso il modello migliore su ciò di cui tratta
+questo progetto — e non solo più incline a rifiutare? Fai girare gli
+stessi prompt sul modello base e su base + adapter, poi confrontali alla
+cieca:
+
+```bash
+python eval/run_eval.py --base-model <base_model>                                  # -> eval/results/base.jsonl
+python eval/run_eval.py --base-model <base_model> --adapter training/output/final_adapter   # -> eval/results/finetuned.jsonl
+python eval/score.py compare eval/results/base.jsonl eval/results/finetuned.jsonl
+python eval/score.py report --compare eval/results/base.jsonl:eval/results/finetuned.jsonl
+```
+
+Vedi `../eval/README.it.md` per dare un punteggio a ogni run singolarmente,
+e per cosa guardare nel report.
+
 ## Nota sulla "consapevolezza"
 
 Il punto del progetto non e' solo addestrare *un* modello, ma addestrarlo

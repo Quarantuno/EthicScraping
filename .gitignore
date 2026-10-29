@@ -12,6 +12,7 @@ training/output/
 training/config.yaml
 config/sources.yaml
 eval/results.jsonl
+eval/results/
 .idea/
 *.crawl_state.json
 *.egg-info/

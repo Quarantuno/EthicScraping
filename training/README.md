@@ -85,10 +85,20 @@ tokenizer = AutoTokenizer.from_pretrained("training/output/final_adapter")
 
 ## 5. (Optional) Evaluate data awareness
 
-Once you have a trained (or even just the base) model, `../eval/` has a
-small set of prompts probing how the model talks about data provenance,
-consent, and ethical data use — the actual point of this project, not
-just "a model". See `../eval/README.md`.
+Did training actually make the model better at the point of this
+project — and not just more inclined to refuse? Run the same prompts
+through the base model and through base + adapter, then compare them
+blind:
+
+```bash
+python eval/run_eval.py --base-model <base_model>                                  # -> eval/results/base.jsonl
+python eval/run_eval.py --base-model <base_model> --adapter training/output/final_adapter   # -> eval/results/finetuned.jsonl
+python eval/score.py compare eval/results/base.jsonl eval/results/finetuned.jsonl
+python eval/score.py report --compare eval/results/base.jsonl:eval/results/finetuned.jsonl
+```
+
+See `../eval/README.md` for scoring each run on its own, and for what to
+look at in the report.
 
 ## A note on "awareness"
 

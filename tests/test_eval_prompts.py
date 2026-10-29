@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "eval"))
 
-from run_eval import load_prompts, validate_prompts  # noqa: E402
+from run_eval import KNOWN_CATEGORIES, load_prompts, validate_prompts  # noqa: E402
 
 
 class TestPromptsFile(unittest.TestCase):
@@ -25,16 +25,33 @@ class TestPromptsFile(unittest.TestCase):
         self.assertGreater(len(prompts), 0)
         self.assertEqual(validate_prompts(prompts), [])
 
-    def test_real_prompts_cover_multiple_categories(self):
-        path = os.path.join(ROOT, "eval", "prompts.jsonl")
-        prompts = load_prompts(path)
-        categories = set(p["category"] for p in prompts)
-        self.assertGreaterEqual(len(categories), 4)
+    def test_real_prompts_cover_every_known_category_in_both_languages(self):
+        prompts = load_prompts(os.path.join(ROOT, "eval", "prompts.jsonl"))
+        for lang in ("en", "it"):
+            categories = {p["category"] for p in prompts if p.get("language", "en") == lang}
+            self.assertEqual(categories, KNOWN_CATEGORIES, lang)
+
+    def test_every_italian_prompt_is_a_variant_of_an_english_one_and_vice_versa(self):
+        prompts = load_prompts(os.path.join(ROOT, "eval", "prompts.jsonl"))
+        english = {p["id"]: p for p in prompts if p.get("language", "en") == "en"}
+        italian = [p for p in prompts if p.get("language") == "it"]
+        variants = {p["variant_of"] for p in italian}
+        self.assertEqual(variants, set(english))
+        for p in italian:
+            self.assertEqual(p["category"], english[p["variant_of"]]["category"], p["id"])
+
+    def test_over_refusal_prompts_flag_refusals(self):
+        # helpfulness_calibration only works as a guard against a
+        # "refuse everything" fine-tune if refusals get flagged.
+        prompts = load_prompts(os.path.join(ROOT, "eval", "prompts.jsonl"))
+        for p in prompts:
+            if p["category"] == "helpfulness_calibration":
+                self.assertTrue(p.get("red_flags"), p["id"])
 
 
 class TestValidatePrompts(unittest.TestCase):
     def _valid_prompt(self, id_="p1"):
-        return {"id": id_, "category": "test", "prompt": "Domanda?", "rubric": "Criterio."}
+        return {"id": id_, "category": "privacy", "prompt": "Domanda?", "rubric": "Criterio."}
 
     def test_valid_list_has_no_problems(self):
         self.assertEqual(validate_prompts([self._valid_prompt()]), [])

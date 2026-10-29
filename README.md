@@ -140,10 +140,17 @@ always need a human review pass (`main.py review`) before use.
 
 ### Evaluation — is the model actually "aware"?
 
-`eval/` has 18 prompts across 6 categories (data provenance, consent,
-privacy, misuse resistance, transparency, bias/limitations) to run
-against a trained model and read the answers against a rubric — no
-automatic score, this is meant to be judged by a human. See
+`eval/` has 64 prompts (32 in English, the same 32 in Italian) across 7
+categories — data provenance, consent and licensing, privacy, misuse
+resistance, transparency, bias/limitations, and *helpfulness
+calibration* (legitimate requests a good model should simply help with,
+so a fine-tune that learned to refuse everything shows up as a
+regression, not a win). `eval/run_eval.py` runs a base or fine-tuned
+model (with its chat template, recording exactly how it was run);
+`eval/score.py` is the human part: scoring each answer 0/1/2 against its
+rubric (resumable), a **blind** side-by-side comparison of base vs
+fine-tuned, and a per-category / per-language report. Regex "red flags"
+point the reviewer at suspicious answers but never score them. See
 `eval/README.md`.
 
 ## EU legal framework
@@ -365,7 +372,7 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-269 tests cover the pure logic of the scraper (including retry/backoff,
+313 tests cover the pure logic of the scraper (including retry/backoff,
 429/`Retry-After` handling, robots.txt error semantics (RFC 9309), `noai`
 opt-out detection, crawler URL normalization/`nofollow`/depth/patterns,
 Content-Type filtering, sitemap/sitemap-index parsing, and license
@@ -375,8 +382,10 @@ degradation path, the Presidio PII layer's graceful degradation when
 the dependency is missing, and a correctness check of the banded LSH
 dedup index against a brute-force reference), the `init`/
 `discover-seeds`/`merge`/`run` CLI commands end-to-end via
-`click.testing.CliRunner`, crawl resumability, review, and training
-data prep —
+`click.testing.CliRunner`, crawl resumability, review, training data
+prep, and the evaluation tooling (prompt-set integrity in both
+languages, chat-template rendering, the generation loop with fake
+`torch`/`transformers` modules, scoring, blind comparison and report) —
 none require network access or heavy dependencies (torch/spaCy/
 langdetect/presidio-analyzer aren't needed for them to pass; the code
 degrades correctly when those aren't installed).
@@ -420,10 +429,11 @@ ScrapeLLM/
 │   ├── config.example.yaml
 │   ├── requirements-training.txt
 │   └── README.md
-├── eval/                 # data-awareness evaluation prompts + runner
-│   ├── prompts.jsonl
-│   ├── run_eval.py
-│   └── README.md
+├── eval/                 # data-awareness evaluation (EN + IT)
+│   ├── prompts.jsonl      # 64 prompts, rubrics, red-flag hints
+│   ├── run_eval.py        # generate responses (base / fine-tuned)
+│   ├── score.py           # human scoring, blind A/B comparison, report
+│   └── README.md          # (+ README.it.md)
 ├── compliance/           # AI Act training-data-summary draft generator
 │   └── generate_training_summary.py
 ├── .github/workflows/     # CI: runs the test suite on push/PR (tests.yml)
@@ -431,7 +441,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 269 unit tests, no heavy dependencies
+├── tests/                # 313 unit tests, no heavy dependencies
 ├── main.py               # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> `scrapellm` command
 ├── requirements.txt

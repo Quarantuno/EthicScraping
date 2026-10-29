@@ -148,11 +148,19 @@ dell'uso.
 
 ### Valutazione — il modello e' davvero "consapevole"?
 
-`eval/` contiene 18 prompt su 6 categorie (provenienza dei dati,
-consenso, privacy, resistenza al misuso, trasparenza, bias/limiti) da
-lanciare contro un modello addestrato e da leggere a mano contro un
-rubric -- nessun punteggio automatico, e' pensato per un giudizio umano.
-Vedi `eval/README.md`.
+`eval/` contiene 64 prompt (32 in inglese, gli stessi 32 in italiano) in
+7 categorie — provenienza dei dati, consenso e licenze, privacy,
+resistenza al misuso, trasparenza, bias/limiti, e *calibrazione
+dell'utilità* (richieste legittime con cui un buon modello dovrebbe
+semplicemente aiutare, così un fine-tuning che ha imparato a rifiutare
+tutto risulta un peggioramento, non un successo). `eval/run_eval.py` fa
+girare un modello base o fine-tuned (con il suo chat template,
+registrando esattamente come è stato eseguito); `eval/score.py` è la
+parte umana: punteggio 0/1/2 a ogni risposta contro il suo rubric
+(riprendibile), confronto **alla cieca** base vs fine-tuned, e report
+per categoria e per lingua. I "red flag" via regex segnalano le risposte
+sospette a chi valuta, ma non le punteggiano mai. Vedi
+`eval/README.it.md`.
 
 ## Quadro normativo UE
 
@@ -381,7 +389,7 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-269 test coprono la logica pura di scraper (incluso retry/backoff,
+313 test coprono la logica pura di scraper (incluso retry/backoff,
 gestione di 429/`Retry-After`, semantica degli errori su robots.txt (RFC
 9309), rilevamento dell'opt-out `noai`, normalizzazione URL/`nofollow`/
 profondita'/pattern del crawler, filtro
@@ -392,8 +400,11 @@ rilevamento lingua, il degrado morbido del livello PII Presidio quando
 la dipendenza manca, e una verifica di correttezza dell'indice LSH a
 bande per la deduplica contro un confronto di riferimento a forza
 bruta), i comandi CLI `init`/`discover-seeds`/`merge`/`run` end-to-end
-via `click.testing.CliRunner`, ripresa della crawl, revisione e
-preparazione dati per il training —
+via `click.testing.CliRunner`, ripresa della crawl, revisione,
+preparazione dati per il training, e gli strumenti di valutazione
+(integrità del set di prompt nelle due lingue, rendering del chat
+template, il ciclo di generazione con moduli `torch`/`transformers`
+finti, punteggi, confronto alla cieca e report) —
 nessuno richiede rete o dipendenze pesanti (torch/spaCy/langdetect/
 presidio-analyzer non servono per farli passare, il codice degrada
 correttamente quando non sono installati).
@@ -437,10 +448,11 @@ ScrapeLLM/
 │   ├── config.example.yaml
 │   ├── requirements-training.txt
 │   └── README.md
-├── eval/                # prompt di valutazione "consapevolezza" + runner
-│   ├── prompts.jsonl
-│   ├── run_eval.py
-│   └── README.md
+├── eval/                # valutazione della "consapevolezza" (EN + IT)
+│   ├── prompts.jsonl     # 64 prompt, rubric, segnali (red flag)
+│   ├── run_eval.py       # genera le risposte (base / fine-tuned)
+│   ├── score.py          # punteggi umani, confronto alla cieca A/B, report
+│   └── README.md         # (+ README.it.md)
 ├── compliance/           # generatore bozza riepilogo dati per AI Act
 │   └── generate_training_summary.py
 ├── .github/workflows/     # CI: esegue i test su ogni push/PR (tests.yml)
@@ -448,7 +460,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 269 unit test, nessuna dipendenza pesante
+├── tests/               # 313 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> comando `scrapellm`
 ├── requirements.txt
