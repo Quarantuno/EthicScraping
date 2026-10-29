@@ -237,6 +237,29 @@ class TestDatasetWriter(unittest.TestCase):
         self.assertIsNotNone(record)
         self.assertEqual(record["pii_redactions"].get("EMAIL"), 1)
 
+    def _noai_result(self):
+        result = self._fake_result()
+        result.ai_optout = {"opted_out": True, "directives": ["noai"], "source": "meta_robots"}
+        return result
+
+    def test_noai_page_is_dropped_even_with_a_high_confidence_license(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        result = self._noai_result()
+        self.assertEqual(result.license_info["confidence"], "high")
+        self.assertIsNone(writer.process(result))
+        self.assertEqual(writer.stats["skipped_ai_optout"], 1)
+
+    def test_noai_page_is_kept_but_flagged_when_respect_noai_is_off(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10, respect_noai=False)
+        record = writer.process(self._noai_result())
+        self.assertIsNotNone(record)
+        self.assertTrue(record["ai_optout"])
+
+    def test_regular_page_has_ai_optout_false(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        record = writer.process(self._fake_result())
+        self.assertFalse(record["ai_optout"])
+
     def test_skips_duplicate_pages(self):
         writer = DatasetWriter(self.output_path, min_word_count=10)
         self.assertIsNotNone(writer.process(self._fake_result("https://esempio-sito.it/a")))

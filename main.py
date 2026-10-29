@@ -82,6 +82,34 @@ def validate_config(cfg: dict) -> list[str]:
     if max_pages is not None and (not isinstance(max_pages, int) or max_pages <= 0):
         errors.append("'crawl.max_pages_per_domain' deve essere un intero positivo.")
 
+    max_depth = crawl_cfg.get("max_depth")
+    if max_depth is not None and (isinstance(max_depth, bool) or not isinstance(max_depth, int)
+                                  or max_depth < 0):
+        errors.append("'crawl.max_depth' deve essere un intero >= 0 (o null per nessun limite).")
+
+    for key in ("include_patterns", "exclude_patterns"):
+        patterns = crawl_cfg.get(key)
+        if patterns is None:
+            continue
+        if not isinstance(patterns, list):
+            errors.append(f"'crawl.{key}' deve essere una lista di espressioni regolari.")
+            continue
+        for pattern in patterns:
+            if not isinstance(pattern, str):
+                errors.append(f"'crawl.{key}': {pattern!r} non e' una stringa.")
+                continue
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                errors.append(f"'crawl.{key}': espressione regolare non valida {pattern!r} ({exc}).")
+
+    politeness_cfg = cfg.get("politeness") or {}
+    max_retry_after = politeness_cfg.get("max_retry_after_seconds")
+    if max_retry_after is not None and (isinstance(max_retry_after, bool)
+                                        or not isinstance(max_retry_after, (int, float))
+                                        or max_retry_after <= 0):
+        errors.append("'politeness.max_retry_after_seconds' deve essere un numero positivo.")
+
     return errors
 
 
@@ -312,11 +340,15 @@ def run(config_path: str, verbose: bool, reset_state: bool):
         check_tdm_reservation=output_cfg.get("respect_tdm_optout", True),
         max_retries=politeness_cfg.get("max_retries", 2),
         backoff_seconds=politeness_cfg.get("backoff_seconds", 2.0),
+        max_retry_after_seconds=politeness_cfg.get("max_retry_after_seconds", 120.0),
     )
     crawler = Crawler(
         fetcher=fetcher,
         max_pages_per_domain=crawl_cfg.get("max_pages_per_domain", 20),
         follow_links=crawl_cfg.get("follow_links", False),
+        max_depth=crawl_cfg.get("max_depth"),
+        include_patterns=crawl_cfg.get("include_patterns"),
+        exclude_patterns=crawl_cfg.get("exclude_patterns"),
     )
 
     if "state_path" in crawl_cfg:
@@ -339,6 +371,7 @@ def run(config_path: str, verbose: bool, reset_state: bool):
         presidio_model=output_cfg.get("presidio_model", "it_core_news_sm"),
         presidio_entities=output_cfg.get("presidio_entities"),
         respect_tdm_optout=output_cfg.get("respect_tdm_optout", True),
+        respect_noai=output_cfg.get("respect_noai", True),
         use_quality_filter=output_cfg.get("use_quality_filter", True),
         min_alpha_ratio=output_cfg.get("min_alpha_ratio", 0.5),
         min_unique_line_ratio=output_cfg.get("min_unique_line_ratio", 0.4),

@@ -93,6 +93,9 @@ def compute_stats(records: List[dict], top_percent: float = 10.0) -> dict:
         "pii": pii_redaction_totals(records) if records else {},
         "tdm": tdm_reservation_stats(records) if records else
                {"records_with_tdm_reservation_flag": 0, "total_records": 0},
+        # Records still carrying a "noai" flag: only possible if the run
+        # had output.respect_noai: false (or the dataset predates it).
+        "ai_optout": sum(1 for r in records if r.get("ai_optout") is True),
     }
 
 
@@ -162,6 +165,10 @@ def render_text(stats: dict, top_n_domains: int = 10) -> str:
     lines.append(
         f"Record con reservation TDM residua: "
         f"{tdm['records_with_tdm_reservation_flag']} / {tdm['total_records']}"
+    )
+    lines.append(
+        f"Record con opt-out 'noai' residuo: "
+        f"{stats.get('ai_optout', 0)} / {stats['total_records']}"
     )
 
     return "\n".join(lines)

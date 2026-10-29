@@ -24,6 +24,9 @@ class RateLimiter:
         current = self._domain_delay.get(domain, self.default_delay)
         self._domain_delay[domain] = max(current, delay)
 
+    def get_delay(self, url: str) -> float:
+        return self._domain_delay.get(urlparse(url).netloc, self.default_delay)
+
     def wait(self, url: str) -> None:
         domain = urlparse(url).netloc
         delay = self._domain_delay.get(domain, self.default_delay)

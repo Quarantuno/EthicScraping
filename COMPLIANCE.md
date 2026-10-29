@@ -77,6 +77,17 @@ means."**
   reservation was found. The license detector (`scraper/license_detector.py`)
   and human review (`main.py review`) matter more than this check for
   most sources today.
+- **Beyond the legal minimum — `noai`:** `scraper/ai_optout.py` also
+  detects the informal but widely used `noai` directive (in
+  `<meta name="robots">` or the `X-Robots-Tag` header). It has no
+  specific standing as an Art. 4(3) reservation, and whether it would
+  count as one "in an appropriate manner" is an open question this
+  project doesn't try to answer. It is, however, an unambiguous
+  statement of what the publisher wants, so by default
+  (`output.respect_noai: true`) those pages are dropped *even when* they
+  carry a clear permissive license — the opposite of how a TDM
+  reservation is weighed above. That's a deliberate ethical choice, not
+  a legal claim.
 
 ## 3. AI Act (Regulation (EU) 2024/1689) — if you release a trained model
 

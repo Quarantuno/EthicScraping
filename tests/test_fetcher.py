@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from scraper.fetcher import EthicalFetcher
+from scraper.fetcher import EthicalFetcher, parse_retry_after
 from scraper.robots import RobotsChecker
 
 
@@ -94,6 +94,118 @@ class TestRetryWithBackoff(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertIn("still down", result.error)
         self.assertEqual(mock_get.call_count, 2)  # 1 initial + 1 retry
+
+
+def _status_response(code, retry_after=None):
+    resp = MagicMock(status_code=code)
+    resp.headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    return resp
+
+
+class TestParseRetryAfter(unittest.TestCase):
+    def test_delay_seconds(self):
+        self.assertEqual(parse_retry_after("120"), 120.0)
+
+    def test_http_date(self):
+        # 2015-10-21 07:28:30 GMT is 30s after "now" below.
+        now = 1445412480.0  # 2015-10-21 07:28:00 GMT
+        self.assertAlmostEqual(
+            parse_retry_after("Wed, 21 Oct 2015 07:28:30 GMT", now=now), 30.0, places=3)
+
+    def test_http_date_in_the_past_is_zero(self):
+        self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT"), 0.0)
+
+    def test_missing_or_garbage_is_none(self):
+        self.assertIsNone(parse_retry_after(None))
+        self.assertIsNone(parse_retry_after(""))
+        self.assertIsNone(parse_retry_after("soon-ish"))
+        self.assertIsNone(parse_retry_after(MagicMock()))
+
+
+class TestTooManyRequests(unittest.TestCase):
+    def test_429_is_retried_then_succeeds(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep"), patch(
+            "scraper.fetcher.requests.get",
+            side_effect=[_status_response(429), _html_response()],
+        ) as mock_get:
+            result = _make_fetcher().fetch("https://example.com/page")
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(mock_get.call_count, 2)
+
+    def test_retry_after_is_honored_when_longer_than_backoff(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep") as mock_sleep, patch(
+            "scraper.fetcher.requests.get",
+            side_effect=[_status_response(429, "7"), _html_response()],
+        ):
+            result = _make_fetcher(backoff_seconds=1.0).fetch("https://example.com/page")
+        self.assertEqual(result.status, "ok")
+        slept = [c.args[0] for c in mock_sleep.call_args_list]
+        self.assertIn(7.0, slept)
+
+    def test_retry_after_on_503_is_honored_too(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep") as mock_sleep, patch(
+            "scraper.fetcher.requests.get",
+            side_effect=[_status_response(503, "4"), _html_response()],
+        ):
+            result = _make_fetcher().fetch("https://example.com/page")
+        self.assertEqual(result.status, "ok")
+        self.assertIn(4.0, [c.args[0] for c in mock_sleep.call_args_list])
+
+    def test_retry_after_beyond_cap_gives_up_without_waiting(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep") as mock_sleep, patch(
+            "scraper.fetcher.requests.get", return_value=_status_response(429, "3600"),
+        ) as mock_get:
+            fetcher = _make_fetcher(max_retry_after_seconds=60)
+            result = fetcher.fetch("https://example.com/page")
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.status_code, 429)
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertNotIn(3600.0, [c.args[0] for c in mock_sleep.call_args_list])
+
+    def test_429_raises_the_domain_delay_for_later_requests(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep"), patch(
+            "scraper.fetcher.requests.get",
+            side_effect=[_status_response(429, "9"), _html_response()],
+        ):
+            fetcher = _make_fetcher()
+            fetcher.fetch("https://example.com/page")
+        self.assertEqual(fetcher.rate_limiter.get_delay("https://example.com/other"), 9.0)
+        # Other domains are unaffected.
+        self.assertEqual(fetcher.rate_limiter.get_delay("https://other.example/"), 0.0)
+
+    def test_retry_after_raise_is_capped(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep"), patch(
+            "scraper.fetcher.requests.get", return_value=_status_response(429, "3600"),
+        ):
+            fetcher = _make_fetcher(max_retry_after_seconds=60)
+            fetcher.fetch("https://example.com/page")
+        self.assertEqual(fetcher.rate_limiter.get_delay("https://example.com/"), 60.0)
+
+    def test_persistent_429_gives_up_after_max_retries(self):
+        with _allow_all_robots(), patch("scraper.fetcher.time.sleep"), patch(
+            "scraper.fetcher.requests.get", return_value=_status_response(429),
+        ) as mock_get:
+            result = _make_fetcher(max_retries=2).fetch("https://example.com/page")
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.status_code, 429)
+        self.assertEqual(mock_get.call_count, 3)
+
+
+class TestAiOptoutWiring(unittest.TestCase):
+    def test_x_robots_tag_noai_is_reported(self):
+        resp = _html_response()
+        resp.headers = {"Content-Type": "text/html", "X-Robots-Tag": "noai, noimageai"}
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
+            result = _make_fetcher().fetch("https://example.com/page")
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.ai_optout["opted_out"])
+        self.assertEqual(result.ai_optout["source"], "x_robots_tag")
+        self.assertEqual(result.x_robots_tag, "noai, noimageai")
+
+    def test_plain_page_is_not_opted_out(self):
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=_html_response()):
+            result = _make_fetcher().fetch("https://example.com/page")
+        self.assertFalse(result.ai_optout["opted_out"])
 
 
 class TestContentTypeFiltering(unittest.TestCase):

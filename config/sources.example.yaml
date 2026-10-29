@@ -61,6 +61,14 @@ output:
   # chiaramente identificata (license_confidence: "high"). Vedi
   # COMPLIANCE.md.
   respect_tdm_optout: true
+  # Rispetta l'opt-out esplicito "noai" (in <meta name="robots"> o
+  # nell'header HTTP X-Robots-Tag): se true (default) la pagina viene
+  # scartata SEMPRE, anche con una licenza permissiva chiaramente
+  # identificata -- a differenza della riserva TDM qui sopra, "noai" e'
+  # il gestore che dice esplicitamente di non volere i suoi contenuti
+  # nell'addestramento di AI. Ogni record porta comunque un campo
+  # ai_optout (vedi `main.py stats`). Vedi scraper/ai_optout.py.
+  respect_noai: true
   # Filtro qualita' del testo: euristiche leggere, nessuna dipendenza
   # esterna (rapporto caratteri alfabetici, righe duplicate/boilerplate,
   # "parole" anomale molto lunghe come URL/base64/codice minificato). Se
@@ -82,11 +90,19 @@ output:
 politeness:
   default_delay_seconds: 2.0
   timeout_seconds: 15
-  # Errori di rete e risposte 5xx transitorie vengono ritentati con
-  # backoff esponenziale (max_retries=2 -> 3 tentativi totali, attese di
-  # ~2s, poi ~4s). Non si ritenta mai su 4xx, robots.txt o deny-list.
+  # Errori di rete, risposte 5xx transitorie e 429 (Too Many Requests)
+  # vengono ritentati con backoff esponenziale (max_retries=2 -> 3
+  # tentativi totali, attese di ~2s, poi ~4s). Non si ritenta mai su
+  # altri 4xx, robots.txt o deny-list.
   max_retries: 2
   backoff_seconds: 2.0
+  # Se un sito risponde 429/503 con un header Retry-After, aspettiamo
+  # quanto chiede (se e' piu' del nostro backoff) E rallentiamo per il
+  # resto della run tutte le richieste successive a quel dominio. Se
+  # chiede di aspettare piu' di questo tetto (in secondi), rinunciamo a
+  # quell'URL per questa run invece di bloccare tutto -- il dominio
+  # resta comunque rallentato (fino a questo tetto).
+  max_retry_after_seconds: 120
 
 # Domini da NON scrappare mai, indipendentemente da cosa dice robots.txt
 # (es. siti con dati sensibili, richieste esplicite di opt-out ricevute, ecc.)
@@ -95,6 +111,23 @@ deny_domains: []
 crawl:
   follow_links: false      # true = segue i link interni allo stesso dominio
   max_pages_per_domain: 20 # tetto di sicurezza per seed, anche con follow_links attivo
+  # Solo con follow_links: true. Profondita' massima in "salti" di link
+  # dal seed (seed = 0, pagine linkate dal seed = 1, ...). null = nessun
+  # limite, vale solo max_pages_per_domain.
+  max_depth: null
+  # Espressioni regolari (re.search sull'URL completo) per decidere quali
+  # link seguire. Con include_patterns non vuota, un link deve
+  # corrisponderne almeno una; un link che corrisponde a una qualsiasi
+  # exclude_patterns e' sempre saltato. Non si applicano al seed.
+  # Esempio: include_patterns: ["/blog/"], exclude_patterns: ["/tag/", "\\?print="]
+  include_patterns: []
+  exclude_patterns: []
+  # Indipendentemente da queste opzioni, quando segue i link la crawl:
+  # rispetta "nofollow" (meta robots / X-Robots-Tag per l'intera pagina,
+  # rel="nofollow" per il singolo link), normalizza gli URL (niente
+  # #frammenti ne' parametri di tracciamento tipo utm_*/fbclid, cosi' la
+  # stessa pagina non viene scaricata due volte), e non richiede nemmeno
+  # link che ovviamente non sono pagine HTML (.pdf, immagini, archivi...).
   # Percorso dello stato di crawling (URL gia' visitati), per poter
   # interrompere una run e riprenderla in seguito senza riscaricare le
   # stesse pagine. Di default deriva da output.dataset_path (es.

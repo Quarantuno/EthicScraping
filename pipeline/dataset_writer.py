@@ -30,6 +30,7 @@ class DatasetWriter:
                  presidio_model: str = "it_core_news_sm",
                  presidio_entities: Optional[list] = None,
                  respect_tdm_optout: bool = True,
+                 respect_noai: bool = True,
                  use_quality_filter: bool = True, min_alpha_ratio: float = 0.5,
                  min_unique_line_ratio: float = 0.4, max_long_word_ratio: float = 0.05,
                  use_language_filter: bool = False, allowed_languages: Optional[list] = None):
@@ -71,6 +72,14 @@ class DatasetWriter:
             already has a clearly identified permissive license (license
             confidence "high" -- in that case the license itself already
             grants the needed permission). See COMPLIANCE.md.
+        respect_noai: if True (default), DROP pages that carry an
+            explicit "noai" directive in <meta name="robots"> or the
+            X-Robots-Tag header (detected by scraper/ai_optout.py).
+            Unlike the TDM check above, a clearly identified permissive
+            license does NOT override this: "noai" is the publisher
+            saying in so many words that they don't want their content
+            used for AI training, and this project's stance is to
+            respect that stated wish, not just the legal minimum.
         use_quality_filter: if True (default), DROP pages that fail the
             lightweight, dependency-free noise heuristics in
             pipeline/quality_filter.py (mostly-boilerplate/repeated
@@ -101,6 +110,7 @@ class DatasetWriter:
         self.presidio_model = presidio_model
         self.presidio_entities = presidio_entities
         self.respect_tdm_optout = respect_tdm_optout
+        self.respect_noai = respect_noai
         self.use_quality_filter = use_quality_filter
         self.min_alpha_ratio = min_alpha_ratio
         self.min_unique_line_ratio = min_unique_line_ratio
@@ -109,7 +119,8 @@ class DatasetWriter:
         self.allowed_languages = set(allowed_languages or [])
         self.stats = {"written": 0, "skipped_license": 0, "skipped_duplicate": 0,
                       "skipped_too_short": 0, "skipped_fetch": 0,
-                      "skipped_tdm_reservation": 0, "skipped_quality": 0,
+                      "skipped_tdm_reservation": 0, "skipped_ai_optout": 0,
+                      "skipped_quality": 0,
                       "skipped_language": 0}
 
     _CONFIDENCE_RANK = {"unknown": 0, "medium": 1, "high": 2}
@@ -147,6 +158,11 @@ class DatasetWriter:
 
         if self._blocked_by_tdm_optout(license_info, result.tdm_reservation or {}):
             self.stats["skipped_tdm_reservation"] += 1
+            return None
+
+        ai_optout = result.ai_optout or {}
+        if self.respect_noai and ai_optout.get("opted_out"):
+            self.stats["skipped_ai_optout"] += 1
             return None
 
         extracted = extract_text(result.html)
@@ -202,6 +218,7 @@ class DatasetWriter:
             "license_source": license_info.get("source"),
             "license_confidence": license_info.get("confidence"),
             "tdm_reservation": (result.tdm_reservation or {}).get("reserved", False),
+            "ai_optout": bool(ai_optout.get("opted_out", False)),
             "language": detected_language,
             "quality_score": quality_metrics["quality_score"],
             "pii_redactions": {k: v for k, v in pii_counts.items() if v > 0},

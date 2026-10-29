@@ -66,6 +66,35 @@ class TestValidateConfig(unittest.TestCase):
         errors = validate_config(cfg)
         self.assertTrue(any("max_pages_per_domain" in e for e in errors))
 
+    def test_new_crawl_options_valid(self):
+        cfg = dict(VALID_CFG)
+        cfg["crawl"] = {"max_pages_per_domain": 20, "max_depth": 2,
+                        "include_patterns": [r"/blog/"], "exclude_patterns": [r"/login", r"\?print="]}
+        cfg["politeness"] = {"max_retry_after_seconds": 90}
+        self.assertEqual(validate_config(cfg), [])
+
+    def test_max_depth_invalid(self):
+        for bad in (-1, "2", True, 1.5):
+            cfg = dict(VALID_CFG)
+            cfg["crawl"] = {"max_depth": bad}
+            self.assertTrue(any("max_depth" in e for e in validate_config(cfg)), bad)
+
+    def test_invalid_regex_pattern_is_reported(self):
+        cfg = dict(VALID_CFG)
+        cfg["crawl"] = {"include_patterns": ["(unclosed"]}
+        errors = validate_config(cfg)
+        self.assertTrue(any("include_patterns" in e and "non valida" in e for e in errors))
+
+    def test_patterns_must_be_a_list(self):
+        cfg = dict(VALID_CFG)
+        cfg["crawl"] = {"exclude_patterns": "/login"}
+        self.assertTrue(any("exclude_patterns" in e for e in validate_config(cfg)))
+
+    def test_max_retry_after_invalid(self):
+        cfg = dict(VALID_CFG)
+        cfg["politeness"] = {"max_retry_after_seconds": 0}
+        self.assertTrue(any("max_retry_after_seconds" in e for e in validate_config(cfg)))
+
     def test_not_a_dict_at_all(self):
         errors = validate_config(["not", "a", "dict"])
         self.assertEqual(len(errors), 1)

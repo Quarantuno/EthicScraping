@@ -15,16 +15,38 @@ review pipeline — not just into the final model's prompt.
 
 ### Phase 1 — Ethical scraping + dataset building
 
-- **Ethical scraper** (`scraper/`): always honors `robots.txt`, applies
-  per-domain rate limiting (2s default, or the site's own `crawl-delay`
-  if higher), supports a deny-list of domains to always skip, and uses
-  an honest, identifiable User-Agent (no fake browsers). Transient
-  network errors and 5xx responses are retried with exponential
-  backoff (never 4xx or a robots/deny-list block); non-HTML responses
-  (PDFs, images, JSON, ...) are discarded by `Content-Type` before any
-  parsing is attempted. A crawl can be interrupted and resumed later
-  without re-fetching pages it already visited (`scraper/crawl_state.py`,
-  `main.py run --reset-state` to start over).
+- **Ethical scraper** (`scraper/`): always honors `robots.txt` —
+  including what to do when it *can't* be read, per RFC 9309: a missing
+  one (404) means no rules, but a server error or an unreachable server
+  means "assume everything is disallowed", and a 401/403/429 on
+  robots.txt itself is treated as a refusal. Applies per-domain rate
+  limiting (2s default, or the site's own `crawl-delay` if higher),
+  supports a deny-list of domains to always skip, and uses an honest,
+  identifiable User-Agent (no fake browsers). Transient network errors,
+  5xx responses and **429 Too Many Requests** are retried with
+  exponential backoff, honoring the server's own `Retry-After` and
+  slowing down every later request to that domain for the rest of the
+  run (never retried: other 4xx or a robots/deny-list block);
+  non-HTML responses (PDFs, images, JSON, ...) are discarded by
+  `Content-Type` before any parsing is attempted. A crawl can be
+  interrupted and resumed later without re-fetching pages it already
+  visited (`scraper/crawl_state.py`, `main.py run --reset-state` to
+  start over).
+- **Link-following crawler** (`scraper/crawler.py`, `crawl.follow_links`):
+  breadth-first, never leaves the seed's domain, honors `nofollow`
+  (page-wide via meta robots / `X-Robots-Tag`, per link via
+  `rel="nofollow"`), normalizes URLs (drops `#fragments` and tracking
+  parameters like `utm_*`/`fbclid`, so one page isn't fetched twice
+  through differently-decorated links), never even requests obvious
+  non-HTML links (`.pdf`, images, archives, ...), and can be limited by
+  link depth (`crawl.max_depth`) and include/exclude URL regexes
+  (`crawl.include_patterns` / `crawl.exclude_patterns`).
+- **AI opt-out signals** (`scraper/ai_optout.py`): besides the formal
+  TDM reservation (see COMPLIANCE.md), pages carrying an explicit
+  `noai` directive in `<meta name="robots">` or the `X-Robots-Tag`
+  header are dropped (`output.respect_noai`, on by default) — even when
+  they have a clear permissive license, because `noai` is the publisher
+  saying in so many words they don't want AI training on their content.
 - **License detection** (`scraper/license_detector.py`): best-effort
   detection of each page's license (`rel="license"` link/meta tag, a
   plain `<a href="creativecommons.org/licenses/...">` even without the
@@ -200,6 +222,13 @@ Edit `config/sources.yaml`:
 - **`output.use_presidio`** / **`presidio_language`** / **`presidio_model`**
   / **`presidio_entities`**: turn on the third PII layer (requires
   Microsoft Presidio, see "PII: three layers" above).
+- **`output.respect_noai`**: drop pages with an explicit `noai`
+  opt-out (default `true`, see "AI opt-out signals" above).
+- **`crawl.follow_links`** / **`max_depth`** / **`include_patterns`** /
+  **`exclude_patterns`**: follow same-domain links, and how far/where.
+- **`politeness.max_retry_after_seconds`**: the longest `Retry-After`
+  we'll actually wait out (default 120s); beyond that we give up on that
+  URL for this run instead of stalling everything.
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
@@ -217,7 +246,7 @@ python main.py stats --dataset dataset/output.jsonl
 
 Quick summary of a dataset already produced: record count, word-count
 distribution, top domains, license mix, PII redaction totals, and how
-many records still carry a TDM reservation flag.
+many records still carry a TDM reservation or `noai` opt-out flag.
 
 The dataset is written as JSONL to `dataset/output.jsonl` (path
 configurable). Each line is a record with this schema:
@@ -235,6 +264,7 @@ configurable). Each line is a record with this schema:
   "license_source": "rel_license_link",
   "license_confidence": "high",
   "tdm_reservation": false,
+  "ai_optout": false,
   "language": "en",
   "quality_score": 0.87,
   "pii_redactions": {"EMAIL": 2},
@@ -335,7 +365,9 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-206 tests cover the pure logic of the scraper (including retry/backoff,
+269 tests cover the pure logic of the scraper (including retry/backoff,
+429/`Retry-After` handling, robots.txt error semantics (RFC 9309), `noai`
+opt-out detection, crawler URL normalization/`nofollow`/depth/patterns,
 Content-Type filtering, sitemap/sitemap-index parsing, and license
 detection across all its fallback paths, with `requests.get` mocked),
 pipeline (including the text-quality heuristics, language-detection
@@ -366,6 +398,7 @@ ScrapeLLM/
 │   ├── rate_limiter.py
 │   ├── license_detector.py
 │   ├── tdm_rights.py    # Art. 4(3) Directive 2019/790 opt-out detection (TDMRep)
+│   ├── ai_optout.py      # "noai" opt-out in meta robots / X-Robots-Tag
 │   ├── fetcher.py        # retry-with-backoff + Content-Type filtering
 │   ├── crawl_state.py    # resumable crawling (persisted visited-URL state)
 │   ├── sitemap.py         # sitemap/sitemap-index parsing for `discover-seeds`
@@ -398,7 +431,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 206 unit tests, no heavy dependencies
+├── tests/                # 269 unit tests, no heavy dependencies
 ├── main.py               # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> `scrapellm` command
 ├── requirements.txt

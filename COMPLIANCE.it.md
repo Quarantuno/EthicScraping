@@ -88,6 +88,17 @@ esempio mediante strumenti leggibili da dispositivo automatico."**
   (`scraper/license_detector.py`) e la revisione umana (`main.py
   review`) contano oggi piu' di questo controllo per la maggior parte
   delle fonti.
+- **Oltre il minimo di legge — `noai`:** `scraper/ai_optout.py`
+  rileva anche la direttiva informale ma molto diffusa `noai` (in
+  `<meta name="robots">` o nell'header `X-Robots-Tag`). Non ha uno
+  status specifico come riserva ai sensi dell'art. 4(3), e se possa
+  valere come riserva espressa "in modo appropriato" e' una questione
+  aperta a cui questo progetto non pretende di rispondere. E' pero' una
+  dichiarazione inequivocabile di cio' che il gestore vuole, quindi di
+  default (`output.respect_noai: true`) quelle pagine vengono scartate
+  *anche quando* hanno una licenza permissiva chiara — l'opposto di come
+  viene pesata la riserva TDM qui sopra. E' una scelta etica deliberata,
+  non un'affermazione giuridica.
 
 ## 3. AI Act (Regolamento (UE) 2024/1689) — se pubblichi un modello addestrato
 

@@ -61,6 +61,7 @@ class TestComputeStatsAndRenderText(unittest.TestCase):
         self.assertEqual(stats["domains"]["total_domains"], 2)
         self.assertEqual(stats["pii"], {"EMAIL": 2})
         self.assertEqual(stats["tdm"]["records_with_tdm_reservation_flag"], 1)
+        self.assertEqual(stats["ai_optout"], 0)
 
         text = render_text(stats)
         self.assertIn("Record totali: 3", text)

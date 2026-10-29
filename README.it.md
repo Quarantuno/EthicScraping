@@ -15,17 +15,42 @@ raccolta e revisione, non solo nel prompt del modello finale.
 
 ### Fase 1 — Scraping etico + costruzione dataset
 
-- **Scraper etico** (`scraper/`): rispetta sempre `robots.txt`, applica
-  rate limiting per dominio (default 2s, o il `crawl-delay` del sito se
-  maggiore), supporta una deny-list di domini da escludere sempre, e usa
-  un User-Agent onesto e identificabile (niente finti browser). Errori
-  di rete transitori e risposte 5xx vengono ritentati con backoff
-  esponenziale (mai su 4xx o blocchi robots/deny-list); le risposte non
-  HTML (PDF, immagini, JSON, ...) vengono scartate in base al
-  `Content-Type` prima di tentare qualsiasi parsing. Una crawl puo'
-  essere interrotta e ripresa in seguito senza riscaricare le pagine
-  gia' visitate (`scraper/crawl_state.py`, `main.py run --reset-state`
-  per ripartire da zero).
+- **Scraper etico** (`scraper/`): rispetta sempre `robots.txt` —
+  compreso cosa fare quando *non si riesce* a leggerlo, secondo la RFC
+  9309: se manca (404) non ci sono regole, ma un errore del server o un
+  server irraggiungibile significano "assumi che sia tutto vietato", e
+  un 401/403/429 sul robots.txt stesso viene trattato come un rifiuto.
+  Applica rate limiting per dominio (default 2s, o il `crawl-delay` del
+  sito se maggiore), supporta una deny-list di domini da escludere
+  sempre, e usa un User-Agent onesto e identificabile (niente finti
+  browser). Errori di rete transitori, risposte 5xx e **429 Too Many
+  Requests** vengono ritentati con backoff esponenziale, rispettando il
+  `Retry-After` indicato dal server e rallentando per il resto della run
+  tutte le richieste successive a quel dominio (mai ritentati: altri
+  4xx o blocchi robots/deny-list); le risposte non HTML (PDF, immagini,
+  JSON, ...) vengono scartate in base al `Content-Type` prima di tentare
+  qualsiasi parsing. Una crawl puo' essere interrotta e ripresa in
+  seguito senza riscaricare le pagine gia' visitate
+  (`scraper/crawl_state.py`, `main.py run --reset-state` per ripartire
+  da zero).
+- **Crawler che segue i link** (`scraper/crawler.py`,
+  `crawl.follow_links`): in ampiezza, non esce mai dal dominio del
+  seed, rispetta `nofollow` (per l'intera pagina via meta robots /
+  `X-Robots-Tag`, per il singolo link via `rel="nofollow"`), normalizza
+  gli URL (niente `#frammenti` ne' parametri di tracciamento tipo
+  `utm_*`/`fbclid`, cosi' la stessa pagina non viene scaricata due volte
+  da link "decorati" diversamente), non richiede nemmeno i link che
+  ovviamente non sono HTML (`.pdf`, immagini, archivi, ...), e puo'
+  essere limitato per profondita' (`crawl.max_depth`) e con espressioni
+  regolari di inclusione/esclusione sugli URL
+  (`crawl.include_patterns` / `crawl.exclude_patterns`).
+- **Segnali di opt-out dall'AI** (`scraper/ai_optout.py`): oltre alla
+  riserva TDM formale (vedi COMPLIANCE.it.md), le pagine con una
+  direttiva esplicita `noai` in `<meta name="robots">` o nell'header
+  `X-Robots-Tag` vengono scartate (`output.respect_noai`, attivo di
+  default) — anche se hanno una licenza permissiva chiara, perche'
+  `noai` e' il gestore che dice esplicitamente di non volere i suoi
+  contenuti nell'addestramento di AI.
 - **Rilevamento licenza** (`scraper/license_detector.py`): tenta di
   individuare la licenza di ogni pagina (link/meta `rel="license"`, un
   semplice `<a href="creativecommons.org/licenses/...">` anche senza
@@ -208,6 +233,14 @@ Modifica `config/sources.yaml`:
 - **`output.use_presidio`** / **`presidio_language`** / **`presidio_model`**
   / **`presidio_entities`**: attiva il terzo livello PII (richiede
   Microsoft Presidio, vedi "PII: tre livelli" sopra).
+- **`output.respect_noai`**: scarta le pagine con opt-out esplicito
+  `noai` (default `true`, vedi "Segnali di opt-out dall'AI" sopra).
+- **`crawl.follow_links`** / **`max_depth`** / **`include_patterns`** /
+  **`exclude_patterns`**: segue i link interni allo stesso dominio, e
+  fin dove/quali.
+- **`politeness.max_retry_after_seconds`**: il `Retry-After` piu' lungo
+  che siamo disposti ad aspettare davvero (default 120s); oltre,
+  rinunciamo a quell'URL per questa run invece di bloccare tutto.
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
@@ -225,7 +258,7 @@ python main.py stats --dataset dataset/output.jsonl
 
 Riepilogo rapido di un dataset gia' prodotto: numero di record,
 distribuzione delle parole, domini principali, mix di licenze, PII
-redatte, e quanti record portano ancora una reservation TDM.
+redatte, e quanti record portano ancora una reservation TDM o un opt-out `noai`.
 
 Il dataset viene scritto come JSONL in `dataset/output.jsonl` (path
 configurabile). Ogni riga e' un record con questo schema:
@@ -243,6 +276,7 @@ configurabile). Ogni riga e' un record con questo schema:
   "license_source": "rel_license_link",
   "license_confidence": "high",
   "tdm_reservation": false,
+  "ai_optout": false,
   "language": "it",
   "quality_score": 0.87,
   "pii_redactions": {"EMAIL": 2},
@@ -347,7 +381,10 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-206 test coprono la logica pura di scraper (incluso retry/backoff, filtro
+269 test coprono la logica pura di scraper (incluso retry/backoff,
+gestione di 429/`Retry-After`, semantica degli errori su robots.txt (RFC
+9309), rilevamento dell'opt-out `noai`, normalizzazione URL/`nofollow`/
+profondita'/pattern del crawler, filtro
 Content-Type, parsing di sitemap/sitemap-index, e il rilevamento licenza
 in tutti i suoi percorsi di fallback, con `requests.get` mockato),
 pipeline (incluse le euristiche di qualita' del testo, il degrado del
@@ -378,6 +415,7 @@ ScrapeLLM/
 │   ├── rate_limiter.py
 │   ├── license_detector.py
 │   ├── tdm_rights.py    # rilevamento opt-out art. 4(3) Direttiva 2019/790 (TDMRep)
+│   ├── ai_optout.py      # opt-out "noai" in meta robots / X-Robots-Tag
 │   ├── fetcher.py        # retry con backoff + filtro Content-Type
 │   ├── crawl_state.py    # crawling ripristinabile (stato URL visitati persistito)
 │   ├── sitemap.py         # parsing sitemap/sitemap-index per `discover-seeds`
@@ -410,7 +448,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 206 unit test, nessuna dipendenza pesante
+├── tests/               # 269 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> comando `scrapellm`
 ├── requirements.txt
