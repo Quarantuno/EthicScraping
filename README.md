@@ -40,7 +40,18 @@ review pipeline — not just into the final model's prompt.
   through differently-decorated links), never even requests obvious
   non-HTML links (`.pdf`, images, archives, ...), and can be limited by
   link depth (`crawl.max_depth`) and include/exclude URL regexes
-  (`crawl.include_patterns` / `crawl.exclude_patterns`).
+  (`crawl.include_patterns` / `crawl.exclude_patterns`). Seeds on
+  different domains can be crawled in parallel
+  (`crawl.max_parallel_domains`) without ever sending one site more than
+  one request at a time.
+- **Downloads** are streamed: headers are checked before the body (a PDF
+  is skipped without being transferred), pages over
+  `politeness.max_page_size_mb` (default 5) are abandoned mid-download,
+  and text is decoded from the declared charset, then `<meta charset>`,
+  then UTF-8 — not requests' ISO-8859-1 default, which garbles accented
+  letters on UTF-8 pages that don't declare a charset. Each record keeps
+  the page's own `<link rel="canonical">`, and the same canonical page is
+  only written once per run.
 - **AI opt-out signals** (`scraper/ai_optout.py`): besides the formal
   TDM reservation (see COMPLIANCE.md), pages carrying an explicit
   `noai` directive in `<meta name="robots">` or the `X-Robots-Tag`
@@ -233,6 +244,10 @@ Edit `config/sources.yaml`:
   opt-out (default `true`, see "AI opt-out signals" above).
 - **`crawl.follow_links`** / **`max_depth`** / **`include_patterns`** /
   **`exclude_patterns`**: follow same-domain links, and how far/where.
+- **`crawl.max_parallel_domains`**: how many different domains to crawl
+  at the same time (default 1, sequential).
+- **`politeness.max_page_size_mb`**: skip pages larger than this
+  (default 5).
 - **`politeness.max_retry_after_seconds`**: the longest `Retry-After`
   we'll actually wait out (default 120s); beyond that we give up on that
   URL for this run instead of stalling everything.
@@ -262,6 +277,7 @@ configurable). Each line is a record with this schema:
 {
   "id": "uuid",
   "url": "https://...",
+  "canonical_url": "https://... (or null)",
   "domain": "example.com",
   "title": "...",
   "text": "cleaned text, with PII redacted",
@@ -372,7 +388,7 @@ Before adding a seed to `config/sources.yaml`, ask yourself:
 python3 -m unittest discover -s tests -v
 ```
 
-313 tests cover the pure logic of the scraper (including retry/backoff,
+336 tests cover the pure logic of the scraper (including retry/backoff,
 429/`Retry-After` handling, robots.txt error semantics (RFC 9309), `noai`
 opt-out detection, crawler URL normalization/`nofollow`/depth/patterns,
 Content-Type filtering, sitemap/sitemap-index parsing, and license
@@ -411,6 +427,7 @@ ScrapeLLM/
 │   ├── ai_optout.py      # "noai" opt-out in meta robots / X-Robots-Tag
 │   ├── fetcher.py        # retry-with-backoff + Content-Type filtering
 │   ├── crawl_state.py    # resumable crawling (persisted visited-URL state)
+│   ├── urls.py           # URL normalization + rel=canonical
 │   ├── sitemap.py         # sitemap/sitemap-index parsing for `discover-seeds`
 │   └── crawler.py
 ├── pipeline/            # cleaning, PII, dedup, review, dataset writing
@@ -442,7 +459,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/              # JSONL output (git-ignored)
-├── tests/                # 313 unit tests, no heavy dependencies
+├── tests/                # 336 unit tests, no heavy dependencies
 ├── main.py               # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> `scrapellm` command
 ├── requirements.txt

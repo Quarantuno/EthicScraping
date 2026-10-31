@@ -8,7 +8,9 @@ error after retries). Nothing is fetched silently or "just in case".
 """
 from __future__ import annotations
 
+import codecs
 import logging
+import re
 import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -22,6 +24,7 @@ from .rate_limiter import RateLimiter
 from .license_detector import detect_license
 from .tdm_rights import TdmRepChecker, combined_status as tdm_combined_status
 from .ai_optout import combined_status as ai_optout_status
+from .urls import extract_canonical
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,42 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 # Status codes for which a Retry-After header is meaningful (RFC 9110
 # section 10.2.3).
 RETRY_AFTER_STATUS_CODES = {429, 503}
+
+DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+
+_META_CHARSET_RE = re.compile(rb'<meta[^>]+charset\s*=\s*["\']?\s*([A-Za-z0-9_.:-]+)', re.I)
+_HEADER_CHARSET_RE = re.compile(r'charset\s*=\s*["\']?([A-Za-z0-9_.:-]+)', re.I)
+
+
+def _known_codec(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    try:
+        return codecs.lookup(name).name
+    except LookupError:
+        return None
+
+
+def decode_html(body: bytes, content_type: Optional[str] = None) -> str:
+    """Bytes -> text for an HTML page, in order of trust: the charset in
+    the Content-Type header, a <meta charset> near the top of the page,
+    then UTF-8, then Windows-1252 as a last resort (never an exception).
+
+    requests' own `.text` falls back to ISO-8859-1 for any text/* response
+    whose header doesn't name a charset -- which garbles every accented
+    letter of a UTF-8 page that just forgot to say so ("è" -> "Ã¨"),
+    exactly the kind of Italian page this project scrapes most."""
+    match = _HEADER_CHARSET_RE.search(content_type or "")
+    codec = _known_codec(match.group(1)) if match else None
+    if codec is None:
+        meta = _META_CHARSET_RE.search(body[:4096])
+        codec = _known_codec(meta.group(1).decode("ascii", "ignore")) if meta else None
+    if codec is not None:
+        return body.decode(codec, errors="replace")
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body.decode("cp1252", errors="replace")
 
 
 def parse_retry_after(value, now: Optional[float] = None) -> Optional[float]:
@@ -69,7 +108,7 @@ def parse_retry_after(value, now: Optional[float] = None) -> Optional[float]:
 class FetchResult:
     url: str
     # "ok" | "blocked_robots" | "blocked_denylist" | "skipped_content_type"
-    # | "error"
+    # | "skipped_too_large" | "error"
     status: str
     html: Optional[str] = None
     status_code: Optional[int] = None
@@ -82,6 +121,8 @@ class FetchResult:
     # Raw X-Robots-Tag header, kept so the crawler can honor "nofollow"
     # sent as a header rather than a meta tag.
     x_robots_tag: Optional[str] = None
+    # The page's own <link rel="canonical">, normalized (None if absent).
+    canonical_url: Optional[str] = None
     fetched_at: Optional[float] = None
     error: Optional[str] = None
     attempts: int = 1
@@ -99,7 +140,8 @@ class EthicalFetcher:
                  check_tdm_reservation: bool = True,
                  max_retries: int = 2, backoff_seconds: float = 2.0,
                  allowed_content_types: Optional[set] = None,
-                 max_retry_after_seconds: float = 120.0):
+                 max_retry_after_seconds: float = 120.0,
+                 max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES):
         self.user_agent = user_agent
         self.deny_domains = set(deny_domains or [])
         self.robots = RobotsChecker(user_agent=user_agent, timeout=timeout)
@@ -118,6 +160,11 @@ class EthicalFetcher:
         # (reported as an error with the real status code) -- but the
         # domain's delay is still raised, so we stay slower with it.
         self.max_retry_after_seconds = max_retry_after_seconds
+        # Responses are streamed: headers are checked before any of the
+        # body is downloaded (a PDF is skipped without transferring it),
+        # and a page larger than this is abandoned mid-download instead
+        # of being pulled into memory in full.
+        self.max_response_bytes = max_response_bytes
 
     def _is_denied(self, url: str) -> bool:
         domain = urlparse(url).netloc.lower()
@@ -156,6 +203,30 @@ class EthicalFetcher:
             return None
         return value if isinstance(value, str) else None
 
+    @staticmethod
+    def _close(resp) -> None:
+        close = getattr(resp, "close", None)
+        if callable(close):
+            close()
+
+    def _read_text(self, resp):
+        """Returns (text, too_large). Real responses are read in chunks
+        and abandoned past max_response_bytes; test doubles that aren't
+        a requests.Response just provide `.text`."""
+        if not isinstance(resp, requests.Response):
+            return resp.text, False
+        declared = self._header(resp, "Content-Length")
+        if declared and declared.strip().isdigit() and int(declared) > self.max_response_bytes:
+            self._close(resp)
+            return None, True
+        body = bytearray()
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            body.extend(chunk)
+            if len(body) > self.max_response_bytes:
+                self._close(resp)
+                return None, True
+        return decode_html(bytes(body), self._header(resp, "Content-Type")), False
+
     def _request_with_retries(self, url: str):
         """Returns (response, attempts) on success, or raises the last
         requests.RequestException after exhausting retries. A response
@@ -171,6 +242,7 @@ class EthicalFetcher:
                 resp = requests.get(
                     url, timeout=self.timeout,
                     headers={"User-Agent": self.user_agent},
+                    stream=True,
                 )
             except requests.RequestException as exc:
                 last_exc = exc
@@ -206,6 +278,7 @@ class EthicalFetcher:
                     "HTTP %d (transitorio) su %s (tentativo %d/%d). Riprovo tra %.1fs.",
                     resp.status_code, url, attempts, self.max_retries + 1, sleep_for,
                 )
+                self._close(resp)
                 time.sleep(sleep_for)
                 continue
 
@@ -232,6 +305,7 @@ class EthicalFetcher:
             return FetchResult(url=url, status="error", error=str(exc), attempts=self.max_retries + 1)
 
         if resp.status_code != 200:
+            self._close(resp)
             return FetchResult(
                 url=url, status="error", status_code=resp.status_code,
                 error=f"HTTP {resp.status_code}", attempts=attempts,
@@ -239,26 +313,41 @@ class EthicalFetcher:
 
         content_type = self._header(resp, "Content-Type") or ""
         if not self._content_type_allowed(content_type):
+            self._close(resp)  # body never downloaded
             return FetchResult(
                 url=url, status="skipped_content_type", status_code=resp.status_code,
                 content_type=content_type, attempts=attempts,
             )
 
+        try:
+            html, too_large = self._read_text(resp)
+        except requests.RequestException as exc:
+            return FetchResult(url=url, status="error", status_code=resp.status_code,
+                               error=f"download interrotto: {exc}", attempts=attempts)
+        if too_large:
+            logger.info("Pagina oltre %d byte, scartata senza scaricarla tutta: %s",
+                        self.max_response_bytes, url)
+            return FetchResult(
+                url=url, status="skipped_too_large", status_code=resp.status_code,
+                content_type=content_type, attempts=attempts,
+            )
+
         x_robots_tag = self._header(resp, "X-Robots-Tag")
-        license_info = detect_license(resp.text, url)
-        tdm_reservation = tdm_combined_status(resp.text, url, self.tdm_checker)
-        ai_optout = ai_optout_status(resp.text, x_robots_tag)
+        license_info = detect_license(html, url)
+        tdm_reservation = tdm_combined_status(html, url, self.tdm_checker)
+        ai_optout = ai_optout_status(html, x_robots_tag)
 
         return FetchResult(
             url=url,
             status="ok",
-            html=resp.text,
+            html=html,
             status_code=resp.status_code,
             content_type=content_type,
             license_info=license_info,
             tdm_reservation=tdm_reservation,
             ai_optout=ai_optout,
             x_robots_tag=x_robots_tag,
+            canonical_url=extract_canonical(html, url),
             fetched_at=time.time(),
             attempts=attempts,
         )

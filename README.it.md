@@ -43,7 +43,19 @@ raccolta e revisione, non solo nel prompt del modello finale.
   ovviamente non sono HTML (`.pdf`, immagini, archivi, ...), e puo'
   essere limitato per profondita' (`crawl.max_depth`) e con espressioni
   regolari di inclusione/esclusione sugli URL
-  (`crawl.include_patterns` / `crawl.exclude_patterns`).
+  (`crawl.include_patterns` / `crawl.exclude_patterns`). I seed su
+  domini diversi si possono scaricare in parallelo
+  (`crawl.max_parallel_domains`) senza mai mandare a un sito più di una
+  richiesta alla volta.
+- **Download** in streaming: gli header si controllano prima del corpo
+  (un PDF viene scartato senza scaricarlo), le pagine oltre
+  `politeness.max_page_size_mb` (default 5) vengono abbandonate a metà
+  download, e il testo viene decodificato secondo il charset dichiarato,
+  poi `<meta charset>`, poi UTF-8 — non con il default ISO-8859-1 di
+  requests, che rovina le lettere accentate delle pagine UTF-8 che non
+  dichiarano il charset. Ogni record conserva il `<link rel="canonical">`
+  della pagina, e la stessa pagina canonica viene scritta una sola volta
+  per run.
 - **Segnali di opt-out dall'AI** (`scraper/ai_optout.py`): oltre alla
   riserva TDM formale (vedi COMPLIANCE.it.md), le pagine con una
   direttiva esplicita `noai` in `<meta name="robots">` o nell'header
@@ -246,6 +258,10 @@ Modifica `config/sources.yaml`:
 - **`crawl.follow_links`** / **`max_depth`** / **`include_patterns`** /
   **`exclude_patterns`**: segue i link interni allo stesso dominio, e
   fin dove/quali.
+- **`crawl.max_parallel_domains`**: quanti domini diversi scaricare
+  contemporaneamente (default 1, in sequenza).
+- **`politeness.max_page_size_mb`**: scarta le pagine più grandi di così
+  (default 5).
 - **`politeness.max_retry_after_seconds`**: il `Retry-After` piu' lungo
   che siamo disposti ad aspettare davvero (default 120s); oltre,
   rinunciamo a quell'URL per questa run invece di bloccare tutto.
@@ -275,6 +291,7 @@ configurabile). Ogni riga e' un record con questo schema:
 {
   "id": "uuid",
   "url": "https://...",
+  "canonical_url": "https://... (o null)",
   "domain": "esempio.com",
   "title": "...",
   "text": "testo pulito, con PII redatta",
@@ -389,7 +406,7 @@ Prima di aggiungere un seed a `config/sources.yaml`, chiediti:
 python3 -m unittest discover -s tests -v
 ```
 
-313 test coprono la logica pura di scraper (incluso retry/backoff,
+336 test coprono la logica pura di scraper (incluso retry/backoff,
 gestione di 429/`Retry-After`, semantica degli errori su robots.txt (RFC
 9309), rilevamento dell'opt-out `noai`, normalizzazione URL/`nofollow`/
 profondita'/pattern del crawler, filtro
@@ -430,6 +447,7 @@ ScrapeLLM/
 │   ├── ai_optout.py      # opt-out "noai" in meta robots / X-Robots-Tag
 │   ├── fetcher.py        # retry con backoff + filtro Content-Type
 │   ├── crawl_state.py    # crawling ripristinabile (stato URL visitati persistito)
+│   ├── urls.py           # normalizzazione URL + rel=canonical
 │   ├── sitemap.py         # parsing sitemap/sitemap-index per `discover-seeds`
 │   └── crawler.py
 ├── pipeline/           # pulizia, PII, dedup, revisione, scrittura dataset
@@ -461,7 +479,7 @@ ScrapeLLM/
 ├── config/
 │   └── sources.example.yaml
 ├── dataset/             # output JSONL (ignorato da git)
-├── tests/               # 313 unit test, nessuna dipendenza pesante
+├── tests/               # 336 unit test, nessuna dipendenza pesante
 ├── main.py              # CLI: init, discover-seeds, run, merge, review, stats
 ├── pyproject.toml         # packaging: `pip install -e .` -> comando `scrapellm`
 ├── requirements.txt

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from typing import Optional, Set
 
 logger = logging.getLogger("scrapellm.crawl_state")
@@ -25,6 +26,10 @@ class CrawlState:
     def __init__(self, state_path: Optional[str]):
         self.state_path = state_path
         self.visited: Set[str] = set()
+        # Seeds on different domains can be crawled in parallel threads
+        # (crawl.max_parallel_domains): updates and file writes go one
+        # at a time.
+        self._lock = threading.Lock()
         if state_path and os.path.exists(state_path):
             try:
                 with open(state_path, "r", encoding="utf-8") as f:
@@ -41,11 +46,13 @@ class CrawlState:
                 )
 
     def is_visited(self, url: str) -> bool:
-        return url in self.visited
+        with self._lock:
+            return url in self.visited
 
     def mark_visited(self, url: str) -> None:
-        self.visited.add(url)
-        self._save()
+        with self._lock:
+            self.visited.add(url)
+            self._save()
 
     def _save(self) -> None:
         if not self.state_path:

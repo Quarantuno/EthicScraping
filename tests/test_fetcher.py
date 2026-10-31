@@ -5,13 +5,14 @@ mocking requests.get for the actual page fetch doesn't also have to
 account for the separate robots.txt request against the very same
 global `requests` module -- no real network traffic either way,
 consistent with the rest of this project's test suite."""
+import io
 import unittest
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import requests
 
-from scraper.fetcher import EthicalFetcher, parse_retry_after
+from scraper.fetcher import EthicalFetcher, decode_html, parse_retry_after
 from scraper.robots import RobotsChecker
 
 
@@ -206,6 +207,89 @@ class TestAiOptoutWiring(unittest.TestCase):
         with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=_html_response()):
             result = _make_fetcher().fetch("https://example.com/page")
         self.assertFalse(result.ai_optout["opted_out"])
+
+
+class TrackingBytesIO(io.BytesIO):
+    """Records how many bytes were actually read from the 'network'."""
+
+    def __init__(self, data):
+        super().__init__(data)
+        self.bytes_read = 0
+
+    def read(self, *args, **kwargs):
+        chunk = super().read(*args, **kwargs)
+        self.bytes_read += len(chunk)
+        return chunk
+
+
+def _real_response(body: bytes, content_type="text/html", status=200, extra_headers=None):
+    """A genuine requests.Response streaming from memory, so the real
+    streaming / size-cap / decoding code paths run."""
+    resp = requests.Response()
+    resp.status_code = status
+    resp.headers["Content-Type"] = content_type
+    for k, v in (extra_headers or {}).items():
+        resp.headers[k] = v
+    resp.raw = TrackingBytesIO(body)
+    resp.url = "https://example.com/page"
+    return resp
+
+
+class TestStreamingDownload(unittest.TestCase):
+    def test_html_is_read_and_decoded(self):
+        body = '<html><head><link rel="canonical" href="/page"></head><body>perché è così</body></html>'
+        resp = _real_response(body.encode("utf-8"))  # no charset in the header
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp) as get:
+            result = _make_fetcher().fetch("https://example.com/page?utm_source=x")
+        self.assertEqual(result.status, "ok")
+        self.assertIn("perché è così", result.html)
+        self.assertEqual(result.canonical_url, "https://example.com/page")
+        self.assertTrue(get.call_args.kwargs["stream"])
+
+    def test_skipped_content_type_never_downloads_the_body(self):
+        resp = _real_response(b"%PDF-1.4" + b"x" * 100000, content_type="application/pdf")
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
+            result = _make_fetcher().fetch("https://example.com/doc")
+        self.assertEqual(result.status, "skipped_content_type")
+        self.assertEqual(resp.raw.bytes_read, 0)
+
+    def test_declared_content_length_over_the_cap_is_skipped_without_reading(self):
+        resp = _real_response(b"<html>" + b"x" * 5000, extra_headers={"Content-Length": "5006"})
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
+            result = _make_fetcher(max_response_bytes=1000).fetch("https://example.com/big")
+        self.assertEqual(result.status, "skipped_too_large")
+        self.assertEqual(resp.raw.bytes_read, 0)
+
+    def test_undeclared_size_is_capped_while_streaming(self):
+        resp = _real_response(b"<html>" + b"x" * 500000)
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
+            result = _make_fetcher(max_response_bytes=100000).fetch("https://example.com/big")
+        self.assertEqual(result.status, "skipped_too_large")
+        self.assertLess(resp.raw.bytes_read, 500000)
+
+    def test_page_just_under_the_cap_is_kept(self):
+        resp = _real_response(b"<html><body>" + b"a" * 900 + b"</body></html>")
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
+            result = _make_fetcher(max_response_bytes=1000).fetch("https://example.com/ok")
+        self.assertEqual(result.status, "ok")
+
+
+class TestDecodeHtml(unittest.TestCase):
+    def test_utf8_without_declared_charset(self):
+        self.assertEqual(decode_html("città".encode("utf-8"), "text/html"), "città")
+
+    def test_header_charset_wins(self):
+        self.assertEqual(decode_html("città".encode("latin-1"), "text/html; charset=ISO-8859-1"), "città")
+
+    def test_meta_charset_used_when_header_has_none(self):
+        body = '<meta charset="windows-1252"><p>città</p>'.encode("cp1252")
+        self.assertIn("città", decode_html(body, "text/html"))
+
+    def test_undeclared_non_utf8_falls_back_without_raising(self):
+        self.assertEqual(decode_html("città".encode("cp1252"), "text/html"), "città")
+
+    def test_unknown_charset_is_ignored(self):
+        self.assertEqual(decode_html("ok".encode(), "text/html; charset=nonsense-42"), "ok")
 
 
 class TestContentTypeFiltering(unittest.TestCase):

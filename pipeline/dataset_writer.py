@@ -103,6 +103,12 @@ class DatasetWriter:
         self.min_license_confidence = min_license_confidence
         self.min_word_count = min_word_count
         self.dedup = Deduplicator(near_duplicate_threshold=near_duplicate_threshold)
+        # Canonical URLs (or plain URLs, when a page declares none) of
+        # everything written so far in this run: the same article served
+        # under two addresses, both pointing at one canonical, is kept
+        # once even if its text differs slightly (print view, different
+        # sidebar...).
+        self._written_canonicals = set()
         self.use_ner = use_ner
         self.ner_model = ner_model
         self.use_presidio = use_presidio
@@ -202,13 +208,15 @@ class DatasetWriter:
             for label, count in presidio_counts.items():
                 pii_counts[label] = pii_counts.get(label, 0) + count
 
-        if self.dedup.is_duplicate(redacted_text):
+        canonical_key = getattr(result, "canonical_url", None) or result.url
+        if canonical_key in self._written_canonicals or self.dedup.is_duplicate(redacted_text):
             self.stats["skipped_duplicate"] += 1
             return None
 
         record = {
             "id": str(uuid.uuid4()),
             "url": result.url,
+            "canonical_url": getattr(result, "canonical_url", None),
             "domain": urlparse(result.url).netloc,
             "title": extracted["title"],
             "text": redacted_text,
@@ -229,5 +237,6 @@ class DatasetWriter:
         with self.output_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+        self._written_canonicals.add(canonical_key)
         self.stats["written"] += 1
         return record

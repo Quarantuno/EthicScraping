@@ -103,6 +103,11 @@ politeness:
   # quell'URL per questa run invece di bloccare tutto -- il dominio
   # resta comunque rallentato (fino a questo tetto).
   max_retry_after_seconds: 120
+  # Le risposte vengono scaricate in streaming: gli header si controllano
+  # prima del corpo (un PDF viene scartato senza scaricarlo), e una pagina
+  # piu' grande di questo limite (in MB) viene abbandonata a meta'
+  # download invece di finire tutta in memoria.
+  max_page_size_mb: 5
 
 # Domini da NON scrappare mai, indipendentemente da cosa dice robots.txt
 # (es. siti con dati sensibili, richieste esplicite di opt-out ricevute, ecc.)
@@ -122,6 +127,13 @@ crawl:
   # Esempio: include_patterns: ["/blog/"], exclude_patterns: ["/tag/", "\\?print="]
   include_patterns: []
   exclude_patterns: []
+  # Quanti DOMINI diversi scaricare contemporaneamente (1 = tutto in
+  # sequenza, come sempre). La cortesia non cambia: tutti i seed di uno
+  # stesso dominio restano su un solo thread, una richiesta alla volta,
+  # con il suo intervallo -- nessun sito riceve mai piu' di una richiesta
+  # nostra per volta; semplicemente non si aspetta il ritardo del sito A
+  # prima di iniziare col sito B. Utile con molti seed su domini diversi.
+  max_parallel_domains: 1
   # Indipendentemente da queste opzioni, quando segue i link la crawl:
   # rispetta "nofollow" (meta robots / X-Robots-Tag per l'intera pagina,
   # rel="nofollow" per il singolo link), normalizza gli URL (niente

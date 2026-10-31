@@ -3,9 +3,11 @@ pages already visited in a previous run (Task: resumable crawling)."""
 import os
 import shutil
 import tempfile
+import threading
+import time
 import unittest
 
-from scraper.crawler import Crawler, normalize_url
+from scraper.crawler import Crawler, crawl_seeds, group_seeds_by_domain, normalize_url
 from scraper.crawl_state import CrawlState
 from scraper.fetcher import FetchResult
 
@@ -217,6 +219,84 @@ class TestCrawlerLinkFollowing(unittest.TestCase):
             PAGE_A: _ok(PAGE_A, _links(child)),
         }
         self.assertEqual(self._crawl(results), [SEED, PAGE_A, PAGE_B, child])
+
+
+class TestCrawlSeeds(unittest.TestCase):
+    SEEDS = ["https://a.example/1", "https://b.example/1", "https://a.example/2", "https://c.example/1"]
+
+    def test_grouping_keeps_seed_order_within_domain(self):
+        groups = group_seeds_by_domain(self.SEEDS)
+        self.assertEqual(list(groups), ["a.example", "b.example", "c.example"])
+        self.assertEqual(groups["a.example"], ["https://a.example/1", "https://a.example/2"])
+
+    def test_sequential_is_the_default_and_keeps_seed_order(self):
+        fetcher = DefaultStubFetcher({})
+        crawler = Crawler(fetcher=fetcher)
+        got = [r.url for _seed, r in crawl_seeds(crawler, self.SEEDS)]
+        self.assertEqual(got, self.SEEDS)
+
+    def test_parallel_yields_every_page_once(self):
+        fetcher = DefaultStubFetcher({})
+        crawler = Crawler(fetcher=fetcher)
+        got = [r.url for _seed, r in crawl_seeds(crawler, self.SEEDS, max_parallel_domains=3)]
+        self.assertEqual(sorted(got), sorted(self.SEEDS))
+
+    def test_parallel_never_overlaps_requests_to_the_same_domain(self):
+        lock = threading.Lock()
+        in_flight = {}
+        overlaps = []
+
+        class SlowFetcher:
+            def fetch(self, url):
+                domain = url.split("/")[2]
+                with lock:
+                    if in_flight.get(domain):
+                        overlaps.append(url)
+                    in_flight[domain] = True
+                time.sleep(0.02)
+                with lock:
+                    in_flight[domain] = False
+                return _ok(url)
+
+        seeds = [f"https://{d}.example/{i}" for d in "ab" for i in range(4)]
+        list(crawl_seeds(Crawler(fetcher=SlowFetcher()), seeds, max_parallel_domains=4))
+        self.assertEqual(overlaps, [])
+
+    def test_parallel_actually_overlaps_different_domains(self):
+        # Domain a's fetch waits until domain b's fetch has started: this
+        # only completes if the two domains really run at the same time.
+        b_started = threading.Event()
+
+        class WaitingFetcher:
+            def fetch(self, url):
+                if "b.example" in url:
+                    b_started.set()
+                elif not b_started.wait(timeout=5):
+                    raise AssertionError("domains were not crawled concurrently")
+                return _ok(url)
+
+        seeds = ["https://a.example/1", "https://b.example/1"]
+        got = list(crawl_seeds(Crawler(fetcher=WaitingFetcher()), seeds, max_parallel_domains=2))
+        self.assertEqual(len(got), 2)
+
+    def test_parallel_with_shared_crawl_state(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            state = CrawlState(os.path.join(tmpdir, "state.json"))
+            seeds = [f"https://{d}.example/{i}" for d in "abc" for i in range(5)]
+            list(crawl_seeds(Crawler(fetcher=DefaultStubFetcher({})), seeds, state=state,
+                             max_parallel_domains=3))
+            reloaded = CrawlState(os.path.join(tmpdir, "state.json"))
+            self.assertEqual(reloaded.visited, set(seeds))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_stopping_early_does_not_hang(self):
+        seeds = [f"https://{d}.example/{i}" for d in "abcd" for i in range(50)]
+        gen = crawl_seeds(Crawler(fetcher=DefaultStubFetcher({})), seeds, max_parallel_domains=4)
+        first = next(gen)
+        gen.close()
+        self.assertTrue(first[1].url.startswith("https://"))
 
 
 if __name__ == "__main__":

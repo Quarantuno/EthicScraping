@@ -260,6 +260,18 @@ class TestDatasetWriter(unittest.TestCase):
         record = writer.process(self._fake_result())
         self.assertFalse(record["ai_optout"])
 
+    def test_same_canonical_is_written_once_even_if_text_differs(self):
+        writer = DatasetWriter(self.output_path, min_word_count=10, near_duplicate_threshold=None)
+        first = self._fake_result("https://esempio-sito.it/articolo")
+        first.canonical_url = "https://esempio-sito.it/articolo"
+        second = self._fake_result("https://esempio-sito.it/articolo?stampa=1")
+        second.html = second.html.replace("Titolo articolo", "Versione stampabile dell'articolo")
+        second.canonical_url = "https://esempio-sito.it/articolo"
+        record = writer.process(first)
+        self.assertEqual(record["canonical_url"], "https://esempio-sito.it/articolo")
+        self.assertIsNone(writer.process(second))
+        self.assertEqual(writer.stats["skipped_duplicate"], 1)
+
     def test_skips_duplicate_pages(self):
         writer = DatasetWriter(self.output_path, min_word_count=10)
         self.assertIsNotNone(writer.process(self._fake_result("https://esempio-sito.it/a")))

@@ -23,26 +23,21 @@ When following links, the crawler also:
 from __future__ import annotations
 
 import logging
+import queue
 import re
-from collections import deque
-from typing import Iterable, Iterator, List, Optional, Pattern, Set
-from urllib.parse import unquote, urljoin, urlparse, urlunparse
+import threading
+from collections import OrderedDict, deque
+from typing import Iterable, Iterator, List, Optional, Pattern, Set, Tuple
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from .ai_optout import meta_directives, parse_directives
 from .crawl_state import CrawlState
 from .fetcher import EthicalFetcher, FetchResult
+from .urls import TRACKING_PARAMS, TRACKING_PARAM_PREFIXES, normalize_url  # noqa: F401 (re-exported)
 
 logger = logging.getLogger("scrapellm.crawler")
-
-# Query parameters that only exist to track where a click came from and
-# never change which page is served.
-TRACKING_PARAM_PREFIXES = ("utm_",)
-TRACKING_PARAMS = {
-    "fbclid", "gclid", "dclid", "gbraid", "wbraid", "msclkid", "yclid",
-    "mc_cid", "mc_eid", "_hsenc", "_hsmi", "igshid", "mkt_tok",
-}
 
 # File extensions that are never going to be an HTML page worth parsing.
 NON_HTML_EXTENSIONS = {
@@ -53,40 +48,6 @@ NON_HTML_EXTENSIONS = {
     ".exe", ".dmg", ".msi", ".apk", ".iso", ".bin",
     ".css", ".js", ".json", ".woff", ".woff2", ".ttf", ".otf", ".eot",
 }
-
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-
-
-def normalize_url(url: str) -> str:
-    """Canonical form used for de-duplication and the crawl state:
-    lowercase scheme and host, no default port, no fragment, no
-    tracking parameters, empty path -> "/", no user:password@. Other
-    query parameters are kept byte-for-byte as they were, in their
-    original order: re-encoding or reordering them can, occasionally,
-    change what a server returns."""
-    parsed = urlparse(url.strip())
-    scheme = parsed.scheme.lower()
-    host = (parsed.hostname or "").lower()
-    try:
-        port = parsed.port
-    except ValueError:
-        # Malformed port in some random href: don't crash the crawl over
-        # it, just keep the URL as-is minus its fragment.
-        return url.strip().split("#", 1)[0]
-    if ":" in host:
-        host = f"[{host}]"  # IPv6 literal
-    netloc = host  # built from hostname only: drops any user:password@
-    if port and _DEFAULT_PORTS.get(scheme) != port:
-        netloc = f"{host}:{port}"
-    path = parsed.path or "/"
-    kept = []
-    for piece in parsed.query.split("&") if parsed.query else []:
-        key = unquote(piece.split("=", 1)[0]).lower()
-        if key in TRACKING_PARAMS or key.startswith(TRACKING_PARAM_PREFIXES):
-            continue
-        kept.append(piece)
-    query = "&".join(kept)
-    return urlunparse((scheme, netloc, path, parsed.params, query, ""))
 
 
 def _looks_like_non_html(url: str) -> bool:
@@ -209,3 +170,86 @@ class Crawler:
                     continue
                 enqueued.add(link)
                 queue.append((link, depth + 1))
+
+
+def group_seeds_by_domain(seeds: Iterable[str]) -> "OrderedDict[str, List[str]]":
+    groups: "OrderedDict[str, List[str]]" = OrderedDict()
+    for seed in seeds:
+        groups.setdefault(urlparse(normalize_url(seed)).netloc, []).append(seed)
+    return groups
+
+
+def crawl_seeds(crawler: Crawler, seeds: Iterable[str], state: Optional[CrawlState] = None,
+                max_parallel_domains: int = 1) -> Iterator[Tuple[str, FetchResult]]:
+    """Yields (seed, FetchResult) for every page fetched from `seeds`.
+
+    With max_parallel_domains > 1, seeds are grouped by domain and up to
+    that many *domains* are crawled at the same time, one thread each.
+    Politeness doesn't change: all the seeds of a given domain are
+    crawled by the same thread, one request at a time, with that
+    domain's own delay, so no site ever sees more than one request from
+    us at once -- we just stop waiting on site A's delay before starting
+    on site B. Results are yielded to the caller's thread, so writing
+    the dataset stays single-threaded.
+
+    max_parallel_domains <= 1 is the plain sequential crawl, in seed order.
+    """
+    seeds = list(seeds)
+    groups = group_seeds_by_domain(seeds)
+    workers = min(max(1, max_parallel_domains), len(groups) or 1)
+
+    if workers <= 1:
+        for seed in seeds:
+            logger.info("Seed: %s", seed)
+            for result in crawler.crawl_seed(seed, state=state):
+                yield seed, result
+        return
+
+    pending: "queue.Queue[str]" = queue.Queue()
+    for domain in groups:
+        pending.put(domain)
+    results: "queue.Queue" = queue.Queue(maxsize=100)
+    stop = threading.Event()
+    done_marker = object()
+
+    def worker():
+        try:
+            while not stop.is_set():
+                try:
+                    domain = pending.get_nowait()
+                except queue.Empty:
+                    return
+                for seed in groups[domain]:
+                    logger.info("Seed: %s", seed)
+                    for result in crawler.crawl_seed(seed, state=state):
+                        if stop.is_set():
+                            return
+                        results.put((seed, result))
+        except Exception as exc:  # surface it in the main thread's logs
+            logger.exception("Errore nel crawl parallelo: %s", exc)
+        finally:
+            results.put(done_marker)
+
+    threads = [threading.Thread(target=worker, name=f"crawl-{i}", daemon=True)
+               for i in range(workers)]
+    logger.info("Crawl in parallelo su %d domini alla volta (%d domini in totale).",
+                workers, len(groups))
+    for t in threads:
+        t.start()
+    finished = 0
+    try:
+        while finished < len(threads):
+            item = results.get()
+            if item is done_marker:
+                finished += 1
+                continue
+            yield item
+    finally:
+        # Caller stopped early (or Ctrl+C): let workers wind down after
+        # their current request instead of starting new ones.
+        stop.set()
+        while True:
+            try:
+                results.get_nowait()
+            except queue.Empty:
+                break

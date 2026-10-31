@@ -90,6 +90,17 @@ class TestValidateConfig(unittest.TestCase):
         cfg["crawl"] = {"exclude_patterns": "/login"}
         self.assertTrue(any("exclude_patterns" in e for e in validate_config(cfg)))
 
+    def test_parallel_and_page_size_options(self):
+        cfg = dict(VALID_CFG)
+        cfg["crawl"] = {"max_parallel_domains": 4}
+        cfg["politeness"] = {"max_page_size_mb": 2.5}
+        self.assertEqual(validate_config(cfg), [])
+        cfg["crawl"] = {"max_parallel_domains": 0}
+        cfg["politeness"] = {"max_page_size_mb": -1}
+        errors = validate_config(cfg)
+        self.assertTrue(any("max_parallel_domains" in e for e in errors))
+        self.assertTrue(any("max_page_size_mb" in e for e in errors))
+
     def test_max_retry_after_invalid(self):
         cfg = dict(VALID_CFG)
         cfg["politeness"] = {"max_retry_after_seconds": 0}

@@ -24,7 +24,7 @@ import click
 import yaml
 
 from scraper.fetcher import EthicalFetcher
-from scraper.crawler import Crawler
+from scraper.crawler import Crawler, crawl_seeds
 from scraper.crawl_state import CrawlState
 from scraper.sitemap import SitemapFetcher
 from pipeline.dataset_writer import DatasetWriter
@@ -109,6 +109,17 @@ def validate_config(cfg: dict) -> list[str]:
                                         or not isinstance(max_retry_after, (int, float))
                                         or max_retry_after <= 0):
         errors.append("'politeness.max_retry_after_seconds' deve essere un numero positivo.")
+
+    max_page_mb = politeness_cfg.get("max_page_size_mb")
+    if max_page_mb is not None and (isinstance(max_page_mb, bool)
+                                    or not isinstance(max_page_mb, (int, float))
+                                    or max_page_mb <= 0):
+        errors.append("'politeness.max_page_size_mb' deve essere un numero positivo.")
+
+    parallel = crawl_cfg.get("max_parallel_domains")
+    if parallel is not None and (isinstance(parallel, bool) or not isinstance(parallel, int)
+                                 or parallel < 1):
+        errors.append("'crawl.max_parallel_domains' deve essere un intero >= 1.")
 
     return errors
 
@@ -341,6 +352,7 @@ def run(config_path: str, verbose: bool, reset_state: bool):
         max_retries=politeness_cfg.get("max_retries", 2),
         backoff_seconds=politeness_cfg.get("backoff_seconds", 2.0),
         max_retry_after_seconds=politeness_cfg.get("max_retry_after_seconds", 120.0),
+        max_response_bytes=int(politeness_cfg.get("max_page_size_mb", 5) * 1024 * 1024),
     )
     crawler = Crawler(
         fetcher=fetcher,
@@ -382,22 +394,21 @@ def run(config_path: str, verbose: bool, reset_state: bool):
 
     logger.info("Avvio scraping di %d seed -> %s", len(seeds), writer.output_path)
 
-    for seed in seeds:
-        logger.info("Seed: %s", seed)
-        for result in crawler.crawl_seed(seed, state=crawl_state):
-            if result.status == "ok":
-                record = writer.process(result)
-                if record:
-                    logger.info(
-                        "OK  %s  (%d parole, licenza=%s/%s)",
-                        result.url, record["word_count"],
-                        record["license"], record["license_confidence"],
-                    )
-                else:
-                    logger.info("SCARTATO %s", result.url)
+    for _seed, result in crawl_seeds(crawler, seeds, state=crawl_state,
+                                     max_parallel_domains=crawl_cfg.get("max_parallel_domains", 1)):
+        if result.status == "ok":
+            record = writer.process(result)
+            if record:
+                logger.info(
+                    "OK  %s  (%d parole, licenza=%s/%s)",
+                    result.url, record["word_count"],
+                    record["license"], record["license_confidence"],
+                )
             else:
-                logger.warning("SALTATO %s (%s)%s", result.url, result.status,
-                                f": {result.error}" if result.error else "")
+                logger.info("SCARTATO %s", result.url)
+        else:
+            logger.warning("SALTATO %s (%s)%s", result.url, result.status,
+                            f": {result.error}" if result.error else "")
 
     logger.info("Fine. Statistiche: %s", writer.stats)
     if crawl_state.state_path:
