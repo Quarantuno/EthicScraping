@@ -326,6 +326,8 @@ The server is accessible only from this computer. The first seed change
 saves a local backup of the original YAML file with the `.dashboard.bak`
 suffix. Settings are rewritten in the YAML file. Press Ctrl+C in the
 terminal to close the panel.
+The panel updates automatically during a crawl. Remove seeds between
+crawls to change future collections. Existing records stay in the dataset.
 
 Quick summary of a dataset already produced: record count, word-count
 distribution, top domains, license mix, PII redaction totals, and how
