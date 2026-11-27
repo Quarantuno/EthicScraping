@@ -36,7 +36,8 @@ from pipeline.dataset_writer import DatasetWriter
 from pipeline.dedup import Deduplicator
 from pipeline.review import ReviewSession
 from pipeline.dataset_stats import compute_stats, render_text as render_stats_text
-from pipeline.stats_html import render_html as render_stats_html
+from pipeline.stats_html import render_dashboard, render_html as render_stats_html
+from pipeline.dashboard_server import serve as serve_dashboard
 
 
 def load_config(path: str) -> dict:
@@ -595,28 +596,30 @@ def stats(dataset_path: str, top_domains: int, top_percent: float, html: bool):
 
 
 @cli.command()
-@click.option("--dataset", "dataset_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+@click.option("--dataset", "dataset_path", type=click.Path(dir_okay=False, path_type=Path),
               default="dataset/output.jsonl", show_default=True, help="Dataset JSONL da aprire")
 @click.option("--output", type=click.Path(dir_okay=False, path_type=Path),
               help="Salva il report in un file HTML a scelta")
+@click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Avvia il pannello locale per gestire i seed e la raccolta")
 @click.option("--open/--no-open", "open_browser", default=True,
               help="Apri il report nel browser predefinito")
-def dashboard(dataset_path: Path, output: Path, open_browser: bool):
-    """Apri statistiche e controlli del dataset in un report HTML locale."""
+def dashboard(dataset_path: Path, output: Path, config_path: Path, open_browser: bool):
+    """Apri un report del dataset o il pannello locale per gestire la raccolta."""
     try:
-        with dataset_path.open(encoding="utf-8") as dataset:
-            audit = check_dataset(dataset)
-            invalid = {row["line"] for row in audit["findings"] if "invalid_record" in row["issues"]}
-            dataset.seek(0)
-            records = [json.loads(line) for number, line in enumerate(dataset, 1)
-                       if line.strip() and number not in invalid]
-        report = render_stats_html(compute_stats(records, top_percent=100),
-                                   top_n_domains=25, compliance=audit)
+        if config_path:
+            if output:
+                raise click.UsageError("--config e --output sono opzioni alternative.")
+            serve_dashboard(config_path, open_browser)
+            return
+        if not dataset_path.is_file():
+            raise click.ClickException(f"Dataset non disponibile: {dataset_path}")
+        report = render_dashboard(dataset_path)
         if output is None:
             output = Path(tempfile.mkdtemp(prefix="ethicscraping-")) / "dashboard.html"
         with output.open("x", encoding="utf-8") as destination:
             destination.write(report)
-    except (OSError, TypeError, ValueError) as exc:
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
         raise click.ClickException(str(exc)) from exc
     output = output.resolve()
     click.echo(f"Dashboard salvata in {output}")

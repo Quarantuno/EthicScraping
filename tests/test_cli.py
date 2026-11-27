@@ -480,6 +480,8 @@ class TestStatsBrowserReport(unittest.TestCase):
             self.assertIn("Controlli di compliance", html)
             self.assertIn("Record JSON non valido", html)
             self.assertIn("Opt-out noai rilevato", html)
+            self.assertIn('id="line-filter"', html)
+            self.assertIn('id="export-findings"', html)
             self.assertNotIn("corpo riservato", html)
             self.assertEqual(runner.invoke(cli, args + ["--no-open"]).exit_code, 1)
 

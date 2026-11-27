@@ -18,3 +18,5 @@ eval/results/
 *.egg-info/
 build/
 dist/
+
+*.dashboard.bak

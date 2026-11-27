@@ -1,5 +1,10 @@
 """Self-contained browser report generated from aggregate dataset statistics."""
+import json
 from html import escape
+
+from compliance.check_dataset import check_dataset
+
+from .dataset_stats import compute_stats
 
 
 def _breakdown(title, rows, searchable=False):
@@ -52,9 +57,13 @@ def _compliance_panel(report):
         rows.append(f'<tr data-issues="{codes}"><th scope="row">{finding["line"]}</th>'
                     f'<td>{escape(labels)}</td></tr>')
     return (heading + summary + note + '<details><summary>Mostra le righe da rivedere</summary>'
+            '<div class="finding-controls"><div>'
             '<label for="issue-filter">Tipo di segnalazione</label>'
             '<select id="issue-filter" aria-controls="findings">'
-            '<option value="">Tutti i tipi</option>' + options + '</select>'
+            '<option value="">Tutti i tipi</option>' + options + '</select></div><div>'
+            '<label for="line-filter">Numero di riga</label>'
+            '<input id="line-filter" type="search" inputmode="numeric" aria-controls="findings">'
+            '</div><button type="button" id="export-findings" hidden>Scarica CSV</button></div>'
             '<p role="status" id="filter-status"></p>'
             '<table id="findings"><thead><tr><th scope="col">Riga</th>'
             '<th scope="col">Segnalazioni</th></tr></thead><tbody>'
@@ -106,6 +115,11 @@ def render_html(stats, top_n_domains=10, compliance=None):
   #compliance {{ margin-top: 1.2rem; }}
   details summary {{ cursor: pointer; font-weight: 650; margin-bottom: .6rem; }}
   details label {{ display: block; }}
+  .finding-controls {{ display: grid; gap: .75rem; align-items: end;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }}
+  button {{ color: #fff; background: #175744; border: 1px solid #175744;
+    padding: .45rem .65rem; border-radius: .4rem; font: inherit; cursor: pointer; }}
+  button:disabled {{ opacity: .55; cursor: default; }}
   table {{ border-collapse: collapse; table-layout: fixed; width: 100%; }}
   th, td {{ text-align: left; border-bottom: 1px solid #cee0d6; padding: .5rem; overflow-wrap: anywhere; }}
   th:first-child {{ width: 4rem; }}
@@ -161,17 +175,59 @@ def render_html(stats, top_n_domains=10, compliance=None):
   if (issueFilter) {{
     const findings = [...document.querySelectorAll("#findings tbody tr")];
     const status = document.getElementById("filter-status");
-    issueFilter.addEventListener("change", () => {{
+    const lineFilter = document.getElementById("line-filter");
+    const exportButton = document.getElementById("export-findings");
+    const applyFilters = () => {{
       const code = issueFilter.value;
+      const line = lineFilter.value.trim();
       let visible = 0;
       for (const row of findings) {{
-        row.hidden = Boolean(code) && !row.dataset.issues.split(" ").includes(code);
+        const matchesLine = !line || row.firstElementChild.textContent === line;
+        const matchesIssue = !code || row.dataset.issues.split(" ").includes(code);
+        row.hidden = !(matchesLine && matchesIssue);
         if (!row.hidden) visible += 1;
       }}
-      status.textContent = visible + " righe mostrate.";
+      status.textContent = visible === 1 ? "1 riga mostrata." : visible + " righe mostrate.";
+      exportButton.disabled = visible === 0;
+    }};
+    issueFilter.addEventListener("change", applyFilters);
+    lineFilter.addEventListener("input", applyFilters);
+    exportButton.hidden = false;
+    applyFilters();
+
+    exportButton.addEventListener("click", () => {{
+      const records = ["riga,segnalazione"];
+      for (const row of findings) {{
+        if (row.hidden) continue;
+        const line = row.firstElementChild.textContent;
+        for (const code of row.dataset.issues.split(" ")) {{
+          if (!issueFilter.value || issueFilter.value === code) {{
+            records.push(line + "," + code);
+          }}
+        }}
+      }}
+      const csv = new Blob([records.join("\\r\\n") + "\\r\\n"], {{type: "text/csv;charset=utf-8"}});
+      const url = URL.createObjectURL(csv);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "segnalazioni-ethicscraping.csv";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }});
   }}
 </script>
 </body>
 </html>
 """
+
+
+def render_dashboard(dataset_path):
+    with dataset_path.open(encoding="utf-8") as dataset:
+        audit = check_dataset(dataset)
+        invalid = {row["line"] for row in audit["findings"] if "invalid_record" in row["issues"]}
+        dataset.seek(0)
+        records = [json.loads(line) for number, line in enumerate(dataset, 1)
+                   if line.strip() and number not in invalid]
+    return render_html(compute_stats(records, top_percent=100), top_n_domains=25, compliance=audit)
