@@ -19,10 +19,11 @@ your specific use is lawful. That still needs a human -- ideally a
 lawyer -- for anything beyond "does the code respect the signals it can
 find". See COMPLIANCE.md for the broader picture (GDPR, AI Act).
 
-Two signal sources are checked:
+Three signal sources are checked:
 1. HTML `<meta name="tdm-reservation" content="1">` in the page itself
    -- free, no extra request, checked on content already fetched.
-2. `/.well-known/tdmrep.json` at the domain root -- one extra request
+2. The HTTP response header `TDM-Reservation: 1`.
+3. `/.well-known/tdmrep.json` at the domain root -- one extra request
    per domain, cached like robots.txt.
 """
 from __future__ import annotations
@@ -102,12 +103,16 @@ class TdmRepChecker:
 
 
 def combined_status(html: str, url: str,
-                     well_known_checker: Optional[TdmRepChecker] = None) -> dict:
-    """Meta tag first (free), then the well-known JSON file if a checker
-    was given (adds one request per domain, cached)."""
+                     well_known_checker: Optional[TdmRepChecker] = None,
+                     *, reservation_header: Optional[str] = None,
+                     policy_header: Optional[str] = None) -> dict:
+    """Retain any positive reservation for the dataset writer to evaluate."""
     meta_status = check_meta_tag(html)
     if meta_status["reserved"]:
         return meta_status
+
+    if (reservation_header or "").strip() == "1":
+        return _status(True, policy_url=policy_header, source="http_header")
 
     if well_known_checker is not None:
         well_known_status = well_known_checker.check(url)

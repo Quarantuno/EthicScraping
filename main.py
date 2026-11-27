@@ -24,6 +24,7 @@ from collections import Counter
 import click
 import yaml
 
+from compliance.check_dataset import check_dataset
 from scraper.fetcher import EthicalFetcher
 from scraper.crawler import Crawler, crawl_seeds
 from scraper.crawl_state import CrawlState
@@ -588,6 +589,20 @@ def stats(dataset_path: str, top_domains: int, top_percent: float, html: bool):
     result = compute_stats(records, top_percent=top_percent)
     render = render_stats_html if html else render_stats_text
     click.echo(render(result, top_n_domains=top_domains))
+
+
+@cli.command("compliance-check")
+@click.option("--dataset", "dataset_path",
+              type=click.Path(exists=True, dir_okay=False, readable=True), required=True)
+@click.option("--fail-on-findings", is_flag=True,
+              help="Esce con codice 1 in presenza di record da rivedere")
+def compliance_check(dataset_path: str, fail_on_findings: bool):
+    """Segnala evidenze mancanti e riserve nei record JSONL."""
+    with open(dataset_path, encoding="utf-8") as dataset:
+        report = check_dataset(dataset)
+    click.echo(json.dumps(report, indent=2, sort_keys=True))
+    if fail_on_findings and report["records_flagged"]:
+        raise click.exceptions.Exit(1)
 
 
 if __name__ == "__main__":

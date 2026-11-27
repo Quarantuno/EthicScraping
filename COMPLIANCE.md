@@ -10,6 +10,40 @@ who you are, where your users are) — talk to a lawyer for that. Laws and
 their interpretation also change; the citations below reflect the state
 of EU law as understood in September 2026.
 
+## Check a dataset before using it
+
+```bash
+python3 main.py compliance-check --dataset dataset/output_approved.jsonl --fail-on-findings
+```
+
+The JSON report identifies malformed records, missing source URLs,
+uncertain or missing license evidence, TDM reservations, and `noai`
+opt-outs by line number. It also flags missing reservation and opt-out
+fields in older datasets. The report omits source URLs and content.
+With `--fail-on-findings`, the command exits with status 1 when it finds
+records to review. Check the legal basis, license terms and access
+authorization against the sources.
+
+Article 53(1)(c) and (d) of the AI Act requires providers of general-purpose
+AI models to maintain a copyright policy and publish a training content
+summary using the official template. Treat this project's generated summary
+as preparatory material.
+[Article 53](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-53) ·
+[AI Office template](https://digital-strategy.ec.europa.eu/en/faqs/template-general-purpose-ai-model-providers-summarise-their-training-content)
+
+Under the US DMCA, section 1201 addresses circumvention of technological
+access controls. Use authorized sources and stop at CAPTCHAs, paywalls,
+or other access restrictions. The page fetcher returns HTTP errors for
+401 and 403 responses. It reports page redirects as `skipped_redirect`.
+Check the destination's authorization before adding it as a seed. Section
+512 provides conditional safe harbors for online service providers.
+[U.S. Copyright Office](https://www.copyright.gov/dmca/)
+
+The fetcher also detects the HTTP `TDM-Reservation: 1` header and preserves
+positive signals for the pipeline to evaluate. The dataset check flags
+residual reservations even in the presence of a license.
+[TDMRep specification](https://w3c-cg.github.io/tdm-reservation-protocol/spec/#tdm-header-field-in-http-responses)
+
 ## 1. GDPR — when scraped content includes personal data
 
 Web-scraped text very often contains personal data (names, contact
