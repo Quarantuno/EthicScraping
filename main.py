@@ -32,6 +32,7 @@ from pipeline.dataset_writer import DatasetWriter
 from pipeline.dedup import Deduplicator
 from pipeline.review import ReviewSession
 from pipeline.dataset_stats import compute_stats, render_text as render_stats_text
+from pipeline.stats_html import render_html as render_stats_html
 
 
 def load_config(path: str) -> dict:
@@ -567,7 +568,8 @@ def review(dataset_path: str, limit: int, preview_chars: int):
 @click.option("--top-domains", type=int, default=10, help="Quanti domini principali mostrare")
 @click.option("--top-percent", type=float, default=10.0,
               help="Percentuale di domini principali da considerare 'top' (10 default, 5 se SME)")
-def stats(dataset_path: str, top_domains: int, top_percent: float):
+@click.option("--html", is_flag=True, help="Stampa un report HTML navigabile nel browser")
+def stats(dataset_path: str, top_domains: int, top_percent: float, html: bool):
     """Statistiche rapide su un dataset JSONL gia' prodotto: numero di
     record, distribuzione delle parole, domini principali, licenze,
     PII redatte e reservation TDM residue.
@@ -579,12 +581,13 @@ def stats(dataset_path: str, top_domains: int, top_percent: float):
             if line:
                 records.append(json.loads(line))
 
-    if not records:
+    if not records and not html:
         click.echo(f"Nessun record trovato in {dataset_path}.")
         return
 
     result = compute_stats(records, top_percent=top_percent)
-    click.echo(render_stats_text(result, top_n_domains=top_domains))
+    render = render_stats_html if html else render_stats_text
+    click.echo(render(result, top_n_domains=top_domains))
 
 
 if __name__ == "__main__":

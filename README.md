@@ -207,6 +207,20 @@ Alternatively, install it as a proper package (`pyproject.toml`,
 `.[lang]` (langdetect), `.[presidio]` (Microsoft Presidio), `.[full]`
 (all three), `.[dev]` (test tooling).
 
+### Optional Rust acceleration for SimHash
+
+The 64-bit SimHash voting loop can use a native Rust library. Python
+continues to handle tokenization, hashing, crawling, and dataset writing.
+
+```bash
+rustc --edition 2021 --crate-type cdylib -O native/simhash.rs -o libethic_simhash.dylib
+SCRAPELLM_SIMHASH_LIB="$PWD/libethic_simhash.dylib" python3 main.py run --config config/sources.yaml
+```
+
+Use the platform library suffix (`.dylib` on macOS, `.so` on Linux).
+Run the same command without setting `SCRAPELLM_SIMHASH_LIB` to use pure
+Python. Older datasets and their fingerprints remain compatible.
+
 ## Usage
 
 ### 0. Quick start: guided setup
@@ -278,6 +292,14 @@ ignore it and start over.
 
 ```bash
 python main.py stats --dataset dataset/output.jsonl
+```
+
+Add `--html` to generate a standalone browser report with charts and a
+search field for the displayed domains. It contains aggregate counts and
+opens locally without a server.
+
+```bash
+python main.py stats --dataset dataset/output.jsonl --html > statistiche.html
 ```
 
 Quick summary of a dataset already produced: record count, word-count

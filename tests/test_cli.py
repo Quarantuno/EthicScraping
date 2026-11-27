@@ -440,5 +440,27 @@ class TestRunUsesSharedValidation(unittest.TestCase):
         self.assertEqual(report["crawl_state"], {"enabled": False, "visited_urls": 0})
 
 
+class TestStatsBrowserReport(unittest.TestCase):
+    def test_html_report_escapes_labels_and_omits_record_content(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("dataset.jsonl", "w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "domain": "<script>alert(1)</script>",
+                    "url": "https://example.org/private",
+                    "title": "Titolo riservato",
+                    "text": "Testo riservato",
+                    "language": "it",
+                    "word_count": 10,
+                    "pii_redactions": {"EMAIL": 2},
+                }) + "\n")
+            result = runner.invoke(cli, ["stats", "--dataset", "dataset.jsonl", "--html"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", result.stdout)
+        self.assertIn("Dati personali oscurati", result.stdout)
+        for private_field in ("<script>alert(1)</script>", "/private", "Titolo riservato", "Testo riservato"):
+            self.assertNotIn(private_field, result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
