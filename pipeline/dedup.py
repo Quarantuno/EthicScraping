@@ -149,6 +149,12 @@ class Deduplicator:
             if near_duplicate_threshold is not None else None
         )
 
+    def add(self, text: str) -> None:
+        """Index a document already accepted into the dataset."""
+        self._seen_hashes.add(content_hash(text))
+        if self._lsh_index is not None:
+            self._lsh_index.add(simhash(text, bits=self.simhash_bits))
+
     def is_duplicate(self, text: str) -> bool:
         h = content_hash(text)
         if h in self._seen_hashes:

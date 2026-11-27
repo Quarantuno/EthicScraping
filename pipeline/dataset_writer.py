@@ -103,12 +103,9 @@ class DatasetWriter:
         self.min_license_confidence = min_license_confidence
         self.min_word_count = min_word_count
         self.dedup = Deduplicator(near_duplicate_threshold=near_duplicate_threshold)
-        # Canonical URLs (or plain URLs, when a page declares none) of
-        # everything written so far in this run: the same article served
-        # under two addresses, both pointing at one canonical, is kept
-        # once even if its text differs slightly (print view, different
-        # sidebar...).
         self._written_canonicals = set()
+        self._needs_newline = False
+        self._load_existing_records()
         self.use_ner = use_ner
         self.ner_model = ner_model
         self.use_presidio = use_presidio
@@ -129,6 +126,30 @@ class DatasetWriter:
                       "skipped_quality": 0,
                       "skipped_language": 0}
 
+    def _load_existing_records(self) -> None:
+        try:
+            existing = self.output_path.open(encoding="utf-8")
+        except FileNotFoundError:
+            return
+
+        with existing:
+            for line_number, line in enumerate(existing, 1):
+                self._needs_newline = not line.endswith("\n")
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"{self.output_path}:{line_number}: {exc.msg}"
+                    ) from exc
+                if not isinstance(record, dict) or not isinstance(record.get("text"), str):
+                    raise ValueError(f"{self.output_path}:{line_number}: expected a record with text")
+                self.dedup.add(record["text"])
+                canonical_key = record.get("canonical_url") or record.get("url")
+                if isinstance(canonical_key, str):
+                    self._written_canonicals.add(canonical_key)
+
     _CONFIDENCE_RANK = {"unknown": 0, "medium": 1, "high": 2}
 
     def _passes_license_filter(self, license_info: dict) -> bool:
@@ -146,6 +167,26 @@ class DatasetWriter:
         # A clearly identified permissive license already grants the
         # needed permission independently of the TDM exception.
         return license_info.get("confidence") != "high"
+
+    def _redact_personal_data(self, text: str) -> tuple[str, dict[str, int]]:
+        redacted, pii_counts = redact_pii(text)
+
+        if self.use_ner:
+            redacted, ner_counts = redact_named_entities(
+                redacted, model_name=self.ner_model
+            )
+            for label, count in ner_counts.items():
+                pii_counts[label] = pii_counts.get(label, 0) + count
+
+        if self.use_presidio:
+            redacted, presidio_counts = redact_with_presidio(
+                redacted, language=self.presidio_language,
+                spacy_model=self.presidio_model, entities=self.presidio_entities,
+            )
+            for label, count in presidio_counts.items():
+                pii_counts[label] = pii_counts.get(label, 0) + count
+
+        return redacted, pii_counts
 
     def process(self, result: FetchResult) -> Optional[dict]:
         """Turns one successful FetchResult into a dataset record, applying
@@ -191,34 +232,25 @@ class DatasetWriter:
             self.stats["skipped_language"] += 1
             return None
 
-        redacted_text, pii_counts = redact_pii(extracted["text"])
-
-        if self.use_ner:
-            redacted_text, ner_counts = redact_named_entities(
-                redacted_text, model_name=self.ner_model
-            )
-            for label, count in ner_counts.items():
-                pii_counts[label] = pii_counts.get(label, 0) + count
-
-        if self.use_presidio:
-            redacted_text, presidio_counts = redact_with_presidio(
-                redacted_text, language=self.presidio_language,
-                spacy_model=self.presidio_model, entities=self.presidio_entities,
-            )
-            for label, count in presidio_counts.items():
-                pii_counts[label] = pii_counts.get(label, 0) + count
+        redacted_text, pii_counts = self._redact_personal_data(extracted["text"])
 
         canonical_key = getattr(result, "canonical_url", None) or result.url
         if canonical_key in self._written_canonicals or self.dedup.is_duplicate(redacted_text):
             self.stats["skipped_duplicate"] += 1
             return None
 
+        redacted_title = extracted["title"]
+        if redacted_title:
+            redacted_title, title_counts = self._redact_personal_data(redacted_title)
+            for label, count in title_counts.items():
+                pii_counts[label] = pii_counts.get(label, 0) + count
+
         record = {
             "id": str(uuid.uuid4()),
             "url": result.url,
             "canonical_url": getattr(result, "canonical_url", None),
             "domain": urlparse(result.url).netloc,
-            "title": extracted["title"],
+            "title": redacted_title,
             "text": redacted_text,
             "word_count": len(redacted_text.split()),
             "content_hash": content_hash(redacted_text),
@@ -235,7 +267,10 @@ class DatasetWriter:
         }
 
         with self.output_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            prefix = "\n" if self._needs_newline else ""
+            f.write(prefix + json.dumps(record, ensure_ascii=False) + "\n")
+
+        self._needs_newline = False
 
         self._written_canonicals.add(canonical_key)
         self.stats["written"] += 1

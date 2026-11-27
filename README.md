@@ -51,7 +51,8 @@ review pipeline — not just into the final model's prompt.
   then UTF-8 — not requests' ISO-8859-1 default, which garbles accented
   letters on UTF-8 pages that don't declare a charset. Each record keeps
   the page's own `<link rel="canonical">`, and the same canonical page is
-  only written once per run.
+  only written once per dataset. When appending to an existing JSONL
+  dataset, the scraper also restores its exact and near-duplicate indexes.
 - **AI opt-out signals** (`scraper/ai_optout.py`): besides the formal
   TDM reservation (see COMPLIANCE.md), pages carrying an explicit
   `noai` directive in `<meta name="robots">` or the `X-Robots-Tag`
@@ -105,6 +106,10 @@ open source base model. See `training/README.md` for details — **don't
 run it on unreviewed data**.
 
 ## PII: three layers
+
+The pipeline applies the same filters to the page title and body before
+saving each record. The redaction counts cover both fields. Source and
+canonical URLs are retained for provenance and can contain identifiers.
 
 1. **Regex (always on)**: emails, phone numbers, IBANs, IPs,
    credit-card-like numbers — structural patterns, fast, no heavy
@@ -254,6 +259,15 @@ Edit `config/sources.yaml`:
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
+```
+
+Add `--report-json` to print a JSON summary to stdout while logs stay on stderr.
+The report counts fetch outcomes (including robots blocks and download errors)
+and pipeline decisions (including license and opt-out rejections and duplicates).
+The visited count is cumulative when crawl state is enabled.
+
+```bash
+python main.py run --config config/sources.yaml --report-json > crawl-report.json
 ```
 
 Interrupted mid-run? Just run the same command again: pages already

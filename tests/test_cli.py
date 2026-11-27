@@ -10,6 +10,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from main import cli, validate_config, _render_config_from_example
+from scraper.fetcher import FetchResult
 
 
 VALID_CFG = {
@@ -416,6 +417,27 @@ class TestRunUsesSharedValidation(unittest.TestCase):
                 f.write("project:\n  user_agent: null\nseeds: []\n")
             result = runner.invoke(cli, ["run", "--config", "bad.yaml"])
             self.assertNotEqual(result.exit_code, 0)
+
+    def test_run_json_report_counts_fetch_and_pipeline_outcomes(self):
+        url = VALID_CFG["seeds"][0]
+        config = {**VALID_CFG, "crawl": {"state_path": None}}
+        outcomes = [
+            (url, FetchResult(url=url, status="blocked_robots")),
+            (url, FetchResult(url=url, status="ok", html="<p>Brief article</p>")),
+        ]
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("sources.yaml", "w", encoding="utf-8") as f:
+                json.dump(config, f)
+            with patch("main.crawl_seeds", return_value=iter(outcomes)):
+                result = runner.invoke(cli, ["run", "--config", "sources.yaml", "--report-json"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["fetch_statuses"], {"ok": 1, "blocked_robots": 1})
+        self.assertEqual(report["pipeline"]["written"], 0)
+        self.assertEqual(report["pipeline"]["skipped_too_short"], 1)
+        self.assertEqual(report["crawl_state"], {"enabled": False, "visited_urls": 0})
 
 
 if __name__ == "__main__":

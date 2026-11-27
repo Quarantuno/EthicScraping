@@ -55,7 +55,8 @@ raccolta e revisione, non solo nel prompt del modello finale.
   requests, che rovina le lettere accentate delle pagine UTF-8 che non
   dichiarano il charset. Ogni record conserva il `<link rel="canonical">`
   della pagina, e la stessa pagina canonica viene scritta una sola volta
-  per run.
+  per dataset. Quando si aggiungono record a un JSONL esistente, lo
+  scraper ricostruisce anche gli indici per i duplicati esatti e simili.
 - **Segnali di opt-out dall'AI** (`scraper/ai_optout.py`): oltre alla
   riserva TDM formale (vedi COMPLIANCE.it.md), le pagine con una
   direttiva esplicita `noai` in `<meta name="robots">` o nell'header
@@ -113,6 +114,11 @@ fine-tuning LoRA su un modello open source. Vedi `training/README.md`
 per i dettagli — **non lanciarlo su dati non revisionati**.
 
 ## PII: tre livelli
+
+Prima di salvare ogni record, la pipeline applica gli stessi filtri al
+titolo e al corpo della pagina. I conteggi includono entrambi i campi.
+Gli URL originali e canonici sono conservati per la tracciabilità e
+possono contenere identificativi.
 
 1. **Regex (sempre attivo)**: email, telefoni, IBAN, IP, numeri tipo
    carta di credito — pattern strutturali, veloce, nessuna dipendenza
@@ -268,6 +274,16 @@ Modifica `config/sources.yaml`:
 
 ```bash
 python main.py run --config config/sources.yaml --verbose
+```
+
+Aggiungi `--report-json` per stampare un riepilogo JSON su stdout mantenendo
+i log su stderr. Il rapporto conta gli esiti delle richieste (inclusi i blocchi
+di robots.txt e gli errori di download) e della pipeline (inclusi gli scarti
+per licenza, opt-out e duplicati). Il conteggio degli URL visitati è cumulativo
+quando lo stato di crawl è attivo.
+
+```bash
+python main.py run --config config/sources.yaml --report-json > crawl-report.json
 ```
 
 Run interrotto a meta'? Basta rilanciare lo stesso comando: le pagine

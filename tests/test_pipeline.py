@@ -225,6 +225,18 @@ class TestDatasetWriter(unittest.TestCase):
         parsed = json.loads(lines[0])
         self.assertEqual(parsed["id"], record["id"])
 
+    def test_redacts_personal_data_in_title_before_saving(self):
+        personal_email = "redazione@example.org"
+        result = self._fake_result()
+        result.html = result.html.replace("Pagina di prova", f"Contatti {personal_email}")
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        record = writer.process(result)
+
+        self.assertEqual(record["title"], "Contatti [REDACTED_EMAIL]")
+        self.assertEqual(record["pii_redactions"]["EMAIL"], 2)
+        with open(self.output_path, encoding="utf-8") as dataset:
+            self.assertNotIn(personal_email, dataset.read())
+
     def test_use_presidio_degrades_safely_when_unavailable(self):
         # presidio-analyzer isn't installed in this environment, so this
         # exercises the real wiring in DatasetWriter.process() end to
@@ -277,6 +289,39 @@ class TestDatasetWriter(unittest.TestCase):
         self.assertIsNotNone(writer.process(self._fake_result("https://esempio-sito.it/a")))
         self.assertIsNone(writer.process(self._fake_result("https://esempio-sito.it/b")))
         self.assertEqual(writer.stats["skipped_duplicate"], 1)
+
+    def test_reopened_dataset_skips_canonical_and_content_duplicates(self):
+        original = self._fake_result("https://esempio-sito.it/originale")
+        original.canonical_url = "https://esempio-sito.it/canonico"
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        self.assertIsNotNone(writer.process(original))
+
+        writer = DatasetWriter(self.output_path, min_word_count=10)
+        alias = self._fake_result("https://esempio-sito.it/stampa")
+        alias.canonical_url = original.canonical_url
+        alias.html = alias.html.replace("Titolo articolo", "Versione stampabile")
+        self.assertIsNone(writer.process(alias))
+        self.assertIsNone(writer.process(self._fake_result("https://esempio-sito.it/mirror")))
+        self.assertEqual(writer.stats["skipped_duplicate"], 2)
+        with open(self.output_path, encoding="utf-8") as dataset:
+            self.assertEqual(len(dataset.readlines()), 1)
+
+    def test_append_to_legacy_record_without_final_newline(self):
+        legacy = {"url": "https://esempio-sito.it/archivio", "text": "Testo di archivio."}
+        with open(self.output_path, "w", encoding="utf-8") as dataset:
+            json.dump(legacy, dataset)
+
+        writer = DatasetWriter(self.output_path, min_word_count=10, near_duplicate_threshold=None)
+        self.assertIsNone(writer.process(self._fake_result(legacy["url"])))
+        new_record = writer.process(self._fake_result())
+        with open(self.output_path, encoding="utf-8") as dataset:
+            self.assertEqual([json.loads(line) for line in dataset], [legacy, new_record])
+
+    def test_reopening_invalid_dataset_reports_the_line(self):
+        with open(self.output_path, "w", encoding="utf-8") as dataset:
+            dataset.write('{"text":"record valido"}\n{"text":')
+        with self.assertRaisesRegex(ValueError, r"out\.jsonl:2:"):
+            DatasetWriter(self.output_path)
 
     def test_license_confidence_filter_drops_unknown_license(self):
         writer = DatasetWriter(self.output_path, min_word_count=10,
