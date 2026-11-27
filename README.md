@@ -302,6 +302,31 @@ opens locally without a server.
 python main.py stats --dataset dataset/output.jsonl --html > statistiche.html
 ```
 
+#### Open the dataset dashboard
+
+```bash
+python3 main.py dashboard --dataset dataset/output.jsonl
+```
+
+The dashboard opens in your default browser and combines charts with
+filterable compliance findings. Find a specific line and export the
+filtered findings to CSV. It runs locally and shows line numbers
+for records to review. Use `--output report.html --no-open` to save a
+copy without launching a browser.
+
+To add domains or seed URLs, start a crawl and check the resulting
+dataset from one panel, launch the dashboard with a crawl configuration:
+
+```bash
+python3 main.py dashboard --config config/sources.yaml
+```
+
+If you need a config file, create one with `python3 main.py init`.
+The server is accessible only from this computer. The first seed change
+saves a local backup of the original YAML file with the `.dashboard.bak`
+suffix. Settings are rewritten in the YAML file. Press Ctrl+C in the
+terminal to close the panel.
+
 Quick summary of a dataset already produced: record count, word-count
 distribution, top domains, license mix, PII redaction totals, and how
 many records still carry a TDM reservation or `noai` opt-out flag.

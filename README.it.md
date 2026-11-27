@@ -318,6 +318,31 @@ senza bisogno di un server.
 python main.py stats --dataset dataset/output.jsonl --html > statistiche.html
 ```
 
+#### Apri la dashboard del dataset
+
+```bash
+python3 main.py dashboard --dataset dataset/output.jsonl
+```
+
+La dashboard si apre nel browser predefinito e unisce grafici e
+segnalazioni di compliance filtrabili. Puoi cercare una riga ed
+esportare in CSV le segnalazioni filtrate. Funziona in locale e indica le
+righe da rivedere. Usa `--output report.html --no-open` per salvare una
+copia senza avviare il browser.
+
+Per aggiungere domini o URL iniziali, avviare il crawl e controllare il
+dataset dallo stesso pannello, usa la configurazione della raccolta:
+
+```bash
+python3 main.py dashboard --config config/sources.yaml
+```
+
+Se manca il file di configurazione, crealo con `python3 main.py init`.
+Il server è accessibile solo da questo computer. Alla prima modifica
+dei seed conserva una copia locale del file YAML originale con il
+suffisso `.dashboard.bak`. Le impostazioni vengono riscritte nel YAML.
+Chiudi il pannello con Ctrl+C nel terminale.
+
 Riepilogo rapido di un dataset gia' prodotto: numero di record,
 distribuzione delle parole, domini principali, mix di licenze, PII
 redatte, e quanti record portano ancora una reservation TDM o un opt-out `noai`.

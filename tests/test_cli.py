@@ -462,6 +462,30 @@ class TestStatsBrowserReport(unittest.TestCase):
             self.assertNotIn(private_field, result.stdout)
 
 
+    def test_dashboard_opens_local_report_with_compliance_findings(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("dataset.jsonl", "w", encoding="utf-8") as dataset:
+                dataset.write('{"domain":"example.org","text":"corpo riservato","ai_optout":true}\n')
+                dataset.write('{bad json}\n')
+            args = ["dashboard", "--dataset", "dataset.jsonl", "--output", "report.html"]
+            with patch("main.webbrowser.open", return_value=True) as browser:
+                result = runner.invoke(cli, args)
+                browser.assert_called_once()
+                self.assertTrue(browser.call_args.args[0].endswith("/report.html"))
+                self.assertTrue(browser.call_args.args[0].startswith("file:"))
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open("report.html", encoding="utf-8") as report:
+                html = report.read()
+            self.assertIn("Controlli di compliance", html)
+            self.assertIn("Record JSON non valido", html)
+            self.assertIn("Opt-out noai rilevato", html)
+            self.assertIn('id="line-filter"', html)
+            self.assertIn('id="export-findings"', html)
+            self.assertNotIn("corpo riservato", html)
+            self.assertEqual(runner.invoke(cli, args + ["--no-open"]).exit_code, 1)
+
+
 class TestComplianceCheck(unittest.TestCase):
     def test_report_counts_flags_and_identifies_lines_without_copying_source(self):
         clean = {
