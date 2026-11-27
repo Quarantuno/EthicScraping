@@ -329,6 +329,10 @@ terminal to close the panel.
 The panel updates automatically during a crawl. Remove seeds between
 crawls to change future collections. Existing records stay in the dataset.
 
+Open the review page after a crawl to approve, reject, or skip records.
+Decisions are shared with the `review` command and saved to the existing
+JSONL review outputs. Skipped records remain pending for a later pass.
+
 Quick summary of a dataset already produced: record count, word-count
 distribution, top domains, license mix, PII redaction totals, and how
 many records still carry a TDM reservation or `noai` opt-out flag.

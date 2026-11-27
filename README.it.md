@@ -346,6 +346,11 @@ i seed tra una raccolta e l’altra. La rimozione vale per le raccolte
 future e i record già salvati restano nel dataset.
 Chiudi il pannello con Ctrl+C nel terminale.
 
+Apri **Rivedi i record** dopo la raccolta per approvare, rifiutare o
+saltare ogni record. Le decisioni sono condivise con il comando `review`
+e vengono salvate nei file JSONL di revisione esistenti. Un record
+saltato resta in attesa e può essere ripreso più tardi.
+
 Riepilogo rapido di un dataset gia' prodotto: numero di record,
 distribuzione delle parole, domini principali, mix di licenze, PII
 redatte, e quanti record portano ancora una reservation TDM o un opt-out `noai`.
