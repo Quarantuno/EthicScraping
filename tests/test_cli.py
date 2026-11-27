@@ -10,6 +10,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from main import cli, validate_config, _render_config_from_example
+from scraper.fetcher import FetchResult
 
 
 VALID_CFG = {
@@ -416,6 +417,79 @@ class TestRunUsesSharedValidation(unittest.TestCase):
                 f.write("project:\n  user_agent: null\nseeds: []\n")
             result = runner.invoke(cli, ["run", "--config", "bad.yaml"])
             self.assertNotEqual(result.exit_code, 0)
+
+    def test_run_json_report_counts_fetch_and_pipeline_outcomes(self):
+        url = VALID_CFG["seeds"][0]
+        config = {**VALID_CFG, "crawl": {"state_path": None}}
+        outcomes = [
+            (url, FetchResult(url=url, status="blocked_robots")),
+            (url, FetchResult(url=url, status="ok", html="<p>Brief article</p>")),
+        ]
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("sources.yaml", "w", encoding="utf-8") as f:
+                json.dump(config, f)
+            with patch("main.crawl_seeds", return_value=iter(outcomes)):
+                result = runner.invoke(cli, ["run", "--config", "sources.yaml", "--report-json"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["fetch_statuses"], {"ok": 1, "blocked_robots": 1})
+        self.assertEqual(report["pipeline"]["written"], 0)
+        self.assertEqual(report["pipeline"]["skipped_too_short"], 1)
+        self.assertEqual(report["crawl_state"], {"enabled": False, "visited_urls": 0})
+
+
+class TestStatsBrowserReport(unittest.TestCase):
+    def test_html_report_escapes_labels_and_omits_record_content(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("dataset.jsonl", "w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "domain": "<script>alert(1)</script>",
+                    "url": "https://example.org/private",
+                    "title": "Titolo riservato",
+                    "text": "Testo riservato",
+                    "language": "it",
+                    "word_count": 10,
+                    "pii_redactions": {"EMAIL": 2},
+                }) + "\n")
+            result = runner.invoke(cli, ["stats", "--dataset", "dataset.jsonl", "--html"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", result.stdout)
+        self.assertIn("Dati personali oscurati", result.stdout)
+        for private_field in ("<script>alert(1)</script>", "/private", "Titolo riservato", "Testo riservato"):
+            self.assertNotIn(private_field, result.stdout)
+
+
+class TestComplianceCheck(unittest.TestCase):
+    def test_report_counts_flags_and_identifies_lines_without_copying_source(self):
+        clean = {
+            "url": "https://example.org/private", "license": "CC BY 4.0",
+            "license_confidence": "high", "license_source": "rel_license_link",
+            "tdm_reservation": False, "ai_optout": False,
+        }
+        flagged = {**clean, "tdm_reservation": True, "ai_optout": True}
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("dataset.jsonl", "w", encoding="utf-8") as dataset:
+                for record in (clean, flagged, {"tdm_reservation": 0}):
+                    dataset.write(json.dumps(record) + "\n")
+                dataset.write("\n{bad json}\n")
+            args = ["compliance-check", "--dataset", "dataset.jsonl"]
+            result = runner.invoke(cli, args + ["--fail-on-findings"])
+            self.assertEqual(runner.invoke(cli, args).exit_code, 0)
+        self.assertEqual(result.exit_code, 1, result.output)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["records_checked"], 4)
+        self.assertEqual(report["records_flagged"], 3)
+        self.assertEqual(report["findings"][0], {
+            "line": 2, "issues": ["tdm_reservation", "ai_optout"],
+        })
+        self.assertEqual(report["counts"]["missing_tdm_reservation_evidence"], 1)
+        self.assertEqual(report["counts"]["license_evidence_for_review"], 1)
+        self.assertEqual(report["findings"][-1], {"line": 5, "issues": ["invalid_record"]})
+        self.assertNotIn("/private", result.stdout)
 
 
 if __name__ == "__main__":

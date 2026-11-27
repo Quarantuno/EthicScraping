@@ -55,7 +55,8 @@ raccolta e revisione, non solo nel prompt del modello finale.
   requests, che rovina le lettere accentate delle pagine UTF-8 che non
   dichiarano il charset. Ogni record conserva il `<link rel="canonical">`
   della pagina, e la stessa pagina canonica viene scritta una sola volta
-  per run.
+  per dataset. Quando si aggiungono record a un JSONL esistente, lo
+  scraper ricostruisce anche gli indici per i duplicati esatti e simili.
 - **Segnali di opt-out dall'AI** (`scraper/ai_optout.py`): oltre alla
   riserva TDM formale (vedi COMPLIANCE.it.md), le pagine con una
   direttiva esplicita `noai` in `<meta name="robots">` o nell'header
@@ -113,6 +114,11 @@ fine-tuning LoRA su un modello open source. Vedi `training/README.md`
 per i dettagli — **non lanciarlo su dati non revisionati**.
 
 ## PII: tre livelli
+
+Prima di salvare ogni record, la pipeline applica gli stessi filtri al
+titolo e al corpo della pagina. I conteggi includono entrambi i campi.
+Gli URL originali e canonici sono conservati per la tracciabilità e
+possono contenere identificativi.
 
 1. **Regex (sempre attivo)**: email, telefoni, IBAN, IP, numeri tipo
    carta di credito — pattern strutturali, veloce, nessuna dipendenza
@@ -215,6 +221,20 @@ posto di `python main.py` in tutto quello che segue (`scrapellm run`,
 (spaCy), `.[lang]` (langdetect), `.[presidio]` (Microsoft Presidio),
 `.[full]` (tutti e tre), `.[dev]` (strumenti per i test).
 
+### Accelerazione Rust opzionale per SimHash
+
+Il calcolo dei voti di SimHash a 64 bit può usare una libreria nativa
+Rust. Python gestisce tokenizzazione, hashing, crawl e scrittura del dataset.
+
+```bash
+rustc --edition 2021 --crate-type cdylib -O native/simhash.rs -o libethic_simhash.dylib
+SCRAPELLM_SIMHASH_LIB="$PWD/libethic_simhash.dylib" python3 main.py run --config config/sources.yaml
+```
+
+Usa l’estensione adatta al sistema (`.dylib` su macOS, `.so` su Linux).
+Senza `SCRAPELLM_SIMHASH_LIB` viene usata l’implementazione Python.
+I dataset esistenti e le loro impronte restano compatibili.
+
 ## Uso
 
 ### 0. Avvio rapido: configurazione guidata
@@ -270,6 +290,16 @@ Modifica `config/sources.yaml`:
 python main.py run --config config/sources.yaml --verbose
 ```
 
+Aggiungi `--report-json` per stampare un riepilogo JSON su stdout mantenendo
+i log su stderr. Il rapporto conta gli esiti delle richieste (inclusi i blocchi
+di robots.txt e gli errori di download) e della pipeline (inclusi gli scarti
+per licenza, opt-out e duplicati). Il conteggio degli URL visitati è cumulativo
+quando lo stato di crawl è attivo.
+
+```bash
+python main.py run --config config/sources.yaml --report-json > crawl-report.json
+```
+
 Run interrotto a meta'? Basta rilanciare lo stesso comando: le pagine
 gia' scaricate (con successo, bloccate da robots, in deny-list, o con
 content-type sbagliato) vengono saltate automaticamente, tracciate in un
@@ -278,6 +308,14 @@ ignorarlo e ripartire da zero.
 
 ```bash
 python main.py stats --dataset dataset/output.jsonl
+```
+
+Con `--html` puoi generare un report per il browser con grafici e ricerca
+tra i domini mostrati. Contiene conteggi aggregati e si apre in locale
+senza bisogno di un server.
+
+```bash
+python main.py stats --dataset dataset/output.jsonl --html > statistiche.html
 ```
 
 Riepilogo rapido di un dataset gia' prodotto: numero di record,

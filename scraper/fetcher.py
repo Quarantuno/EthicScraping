@@ -242,7 +242,7 @@ class EthicalFetcher:
                 resp = requests.get(
                     url, timeout=self.timeout,
                     headers={"User-Agent": self.user_agent},
-                    stream=True,
+                    stream=True, allow_redirects=False,
                 )
             except requests.RequestException as exc:
                 last_exc = exc
@@ -307,7 +307,9 @@ class EthicalFetcher:
         if resp.status_code != 200:
             self._close(resp)
             return FetchResult(
-                url=url, status="error", status_code=resp.status_code,
+                url=url,
+                status="skipped_redirect" if resp.status_code in {301, 302, 303, 307, 308} else "error",
+                status_code=resp.status_code,
                 error=f"HTTP {resp.status_code}", attempts=attempts,
             )
 
@@ -334,7 +336,11 @@ class EthicalFetcher:
 
         x_robots_tag = self._header(resp, "X-Robots-Tag")
         license_info = detect_license(html, url)
-        tdm_reservation = tdm_combined_status(html, url, self.tdm_checker)
+        tdm_reservation = tdm_combined_status(
+            html, url, self.tdm_checker,
+            reservation_header=self._header(resp, "TDM-Reservation"),
+            policy_header=self._header(resp, "TDM-Policy"),
+        )
         ai_optout = ai_optout_status(html, x_robots_tag)
 
         return FetchResult(

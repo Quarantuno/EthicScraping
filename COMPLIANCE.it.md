@@ -11,6 +11,41 @@ puo' conoscere (cosa scrappi, perche', chi sei, dove sono i tuoi utenti)
 cambiano nel tempo; le citazioni qui sotto riflettono lo stato del
 diritto UE cosi' come compreso a settembre 2026.
 
+## Verifica del dataset prima dell'uso
+
+```bash
+python3 main.py compliance-check --dataset dataset/output_approved.jsonl --fail-on-findings
+```
+
+Il comando segnala per numero di riga JSON non valido, URL di provenienza
+mancanti, evidenza di licenza incerta o mancante, riserve TDM e opt-out
+`noai`, inclusi i campi mancanti nei dataset meno recenti. Il rapporto JSON
+omette URL e contenuti. Con `--fail-on-findings` le segnalazioni producono
+il codice di uscita 1. Il report serve a guidare la revisione. La base
+giuridica, le condizioni di licenza e il diritto di accesso vanno
+verificati sulle fonti.
+
+L'art. 53(1)(c) e (d) dell'AI Act richiede ai fornitori di modelli di IA
+per finalità generali una politica sul diritto d'autore e un riepilogo
+pubblico dei contenuti di addestramento conforme al modello ufficiale.
+Il riepilogo generato da EthicScraping è materiale preparatorio.
+[Articolo 53](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-53) ·
+[Modello dell'AI Office](https://digital-strategy.ec.europa.eu/en/faqs/template-general-purpose-ai-model-providers-summarise-their-training-content)
+
+Per il DMCA statunitense, la sezione 1201 disciplina l'elusione delle
+misure tecnologiche di controllo dell'accesso. Usa fonti autorizzate e
+fermati davanti a CAPTCHA, paywall o altre restrizioni di accesso.
+Le risposte 401 e 403 delle pagine restano errori HTTP. Le pagine che
+reindirizzano sono segnalate come `skipped_redirect`. Prima di aggiungere
+la destinazione ai seed, verifica che sia autorizzata. La sezione 512
+disciplina tutele condizionate per i prestatori di servizi online.
+[U.S. Copyright Office](https://www.copyright.gov/dmca/)
+
+Il fetcher rileva anche l'header HTTP `TDM-Reservation: 1`. Un segnale
+positivo è conservato per la valutazione della pipeline. La verifica
+del dataset segnala le riserve residue anche quando è presente una licenza.
+[Specifiche TDMRep](https://w3c-cg.github.io/tdm-reservation-protocol/spec/#tdm-header-field-in-http-responses)
+
 ## 1. GDPR — quando i contenuti scrappati includono dati personali
 
 Il testo raccolto dal web contiene molto spesso dati personali (nomi,

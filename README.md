@@ -51,7 +51,8 @@ review pipeline — not just into the final model's prompt.
   then UTF-8 — not requests' ISO-8859-1 default, which garbles accented
   letters on UTF-8 pages that don't declare a charset. Each record keeps
   the page's own `<link rel="canonical">`, and the same canonical page is
-  only written once per run.
+  only written once per dataset. When appending to an existing JSONL
+  dataset, the scraper also restores its exact and near-duplicate indexes.
 - **AI opt-out signals** (`scraper/ai_optout.py`): besides the formal
   TDM reservation (see COMPLIANCE.md), pages carrying an explicit
   `noai` directive in `<meta name="robots">` or the `X-Robots-Tag`
@@ -105,6 +106,10 @@ open source base model. See `training/README.md` for details — **don't
 run it on unreviewed data**.
 
 ## PII: three layers
+
+The pipeline applies the same filters to the page title and body before
+saving each record. The redaction counts cover both fields. Source and
+canonical URLs are retained for provenance and can contain identifiers.
 
 1. **Regex (always on)**: emails, phone numbers, IBANs, IPs,
    credit-card-like numbers — structural patterns, fast, no heavy
@@ -202,6 +207,20 @@ Alternatively, install it as a proper package (`pyproject.toml`,
 `.[lang]` (langdetect), `.[presidio]` (Microsoft Presidio), `.[full]`
 (all three), `.[dev]` (test tooling).
 
+### Optional Rust acceleration for SimHash
+
+The 64-bit SimHash voting loop can use a native Rust library. Python
+continues to handle tokenization, hashing, crawling, and dataset writing.
+
+```bash
+rustc --edition 2021 --crate-type cdylib -O native/simhash.rs -o libethic_simhash.dylib
+SCRAPELLM_SIMHASH_LIB="$PWD/libethic_simhash.dylib" python3 main.py run --config config/sources.yaml
+```
+
+Use the platform library suffix (`.dylib` on macOS, `.so` on Linux).
+Run the same command without setting `SCRAPELLM_SIMHASH_LIB` to use pure
+Python. Older datasets and their fingerprints remain compatible.
+
 ## Usage
 
 ### 0. Quick start: guided setup
@@ -256,6 +275,15 @@ Edit `config/sources.yaml`:
 python main.py run --config config/sources.yaml --verbose
 ```
 
+Add `--report-json` to print a JSON summary to stdout while logs stay on stderr.
+The report counts fetch outcomes (including robots blocks and download errors)
+and pipeline decisions (including license and opt-out rejections and duplicates).
+The visited count is cumulative when crawl state is enabled.
+
+```bash
+python main.py run --config config/sources.yaml --report-json > crawl-report.json
+```
+
 Interrupted mid-run? Just run the same command again: pages already
 fetched (successfully or not, robots-blocked, deny-listed, or wrong
 content type) are skipped automatically, tracked in a
@@ -264,6 +292,14 @@ ignore it and start over.
 
 ```bash
 python main.py stats --dataset dataset/output.jsonl
+```
+
+Add `--html` to generate a standalone browser report with charts and a
+search field for the displayed domains. It contains aggregate counts and
+opens locally without a server.
+
+```bash
+python main.py stats --dataset dataset/output.jsonl --html > statistiche.html
 ```
 
 Quick summary of a dataset already produced: record count, word-count

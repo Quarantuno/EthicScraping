@@ -21,9 +21,12 @@ di milioni di pagine con pochi duplicati resta piccolo.
 """
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import re
 from typing import Dict, List, Optional, Set
+
+from .native_simhash import load_accumulator
 
 TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
 
@@ -63,6 +66,13 @@ def simhash(text: str, bits: int = 64, shingle_size: int = 4) -> int:
     shingles = _shingles(_tokenize(text), shingle_size)
     if not shingles:
         return 0
+
+    accumulator = load_accumulator() if bits == 64 else None
+    if accumulator is not None:
+        hashes = (ctypes.c_uint64 * len(shingles))(
+            *(_hash_token(shingle, bits) for shingle in shingles)
+        )
+        return accumulator(hashes, len(hashes))
 
     weights = [0] * bits
     for shingle in shingles:
@@ -148,6 +158,12 @@ class Deduplicator:
             _SimHashLSHIndex(simhash_bits, near_duplicate_threshold)
             if near_duplicate_threshold is not None else None
         )
+
+    def add(self, text: str) -> None:
+        """Index a document already accepted into the dataset."""
+        self._seen_hashes.add(content_hash(text))
+        if self._lsh_index is not None:
+            self._lsh_index.add(simhash(text, bits=self.simhash_bits))
 
     def is_duplicate(self, text: str) -> bool:
         h = content_hash(text)

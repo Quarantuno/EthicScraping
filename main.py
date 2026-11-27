@@ -19,10 +19,12 @@ import logging
 import os
 import re
 import sys
+from collections import Counter
 
 import click
 import yaml
 
+from compliance.check_dataset import check_dataset
 from scraper.fetcher import EthicalFetcher
 from scraper.crawler import Crawler, crawl_seeds
 from scraper.crawl_state import CrawlState
@@ -31,6 +33,7 @@ from pipeline.dataset_writer import DatasetWriter
 from pipeline.dedup import Deduplicator
 from pipeline.review import ReviewSession
 from pipeline.dataset_stats import compute_stats, render_text as render_stats_text
+from pipeline.stats_html import render_html as render_stats_html
 
 
 def load_config(path: str) -> dict:
@@ -320,7 +323,9 @@ def discover_seeds(sitemap_url: str, config_path: str, user_agent: str, limit: i
 @click.option("--verbose", is_flag=True, help="Log dettagliati")
 @click.option("--reset-state", is_flag=True,
               help="Ignora lo stato di crawling salvato in precedenza e riparti da zero")
-def run(config_path: str, verbose: bool, reset_state: bool):
+@click.option("--report-json", is_flag=True,
+              help="Stampa su stdout un riepilogo JSON della raccolta")
+def run(config_path: str, verbose: bool, reset_state: bool, report_json: bool):
     """Esegue scraping + pipeline secondo il file di configurazione."""
     setup_logging(verbose)
     logger = logging.getLogger("scrapellm.cli")
@@ -367,35 +372,41 @@ def run(config_path: str, verbose: bool, reset_state: bool):
         state_path = crawl_cfg["state_path"] or None
     else:
         state_path = _default_state_path(output_cfg.get("dataset_path", "dataset/output.jsonl"))
+    try:
+        writer = DatasetWriter(
+            output_path=output_cfg.get("dataset_path", "dataset/output.jsonl"),
+            min_license_confidence=output_cfg.get("min_license_confidence"),
+            min_word_count=output_cfg.get("min_word_count", 50),
+            near_duplicate_threshold=output_cfg.get("near_duplicate_threshold", 8),
+            use_ner=output_cfg.get("use_ner", False),
+            ner_model=output_cfg.get("ner_model", "it_core_news_sm"),
+            use_presidio=output_cfg.get("use_presidio", False),
+            presidio_language=output_cfg.get("presidio_language", "it"),
+            presidio_model=output_cfg.get("presidio_model", "it_core_news_sm"),
+            presidio_entities=output_cfg.get("presidio_entities"),
+            respect_tdm_optout=output_cfg.get("respect_tdm_optout", True),
+            respect_noai=output_cfg.get("respect_noai", True),
+            use_quality_filter=output_cfg.get("use_quality_filter", True),
+            min_alpha_ratio=output_cfg.get("min_alpha_ratio", 0.5),
+            min_unique_line_ratio=output_cfg.get("min_unique_line_ratio", 0.4),
+            max_long_word_ratio=output_cfg.get("max_long_word_ratio", 0.05),
+            use_language_filter=output_cfg.get("use_language_filter", False),
+            allowed_languages=output_cfg.get("allowed_languages"),
+        )
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
     if reset_state and state_path and os.path.exists(state_path):
         os.remove(state_path)
         logger.info("Stato di crawling resettato (rimosso %s).", state_path)
     crawl_state = CrawlState(state_path)
-    writer = DatasetWriter(
-        output_path=output_cfg.get("dataset_path", "dataset/output.jsonl"),
-        min_license_confidence=output_cfg.get("min_license_confidence"),
-        min_word_count=output_cfg.get("min_word_count", 50),
-        near_duplicate_threshold=output_cfg.get("near_duplicate_threshold", 8),
-        use_ner=output_cfg.get("use_ner", False),
-        ner_model=output_cfg.get("ner_model", "it_core_news_sm"),
-        use_presidio=output_cfg.get("use_presidio", False),
-        presidio_language=output_cfg.get("presidio_language", "it"),
-        presidio_model=output_cfg.get("presidio_model", "it_core_news_sm"),
-        presidio_entities=output_cfg.get("presidio_entities"),
-        respect_tdm_optout=output_cfg.get("respect_tdm_optout", True),
-        respect_noai=output_cfg.get("respect_noai", True),
-        use_quality_filter=output_cfg.get("use_quality_filter", True),
-        min_alpha_ratio=output_cfg.get("min_alpha_ratio", 0.5),
-        min_unique_line_ratio=output_cfg.get("min_unique_line_ratio", 0.4),
-        max_long_word_ratio=output_cfg.get("max_long_word_ratio", 0.05),
-        use_language_filter=output_cfg.get("use_language_filter", False),
-        allowed_languages=output_cfg.get("allowed_languages"),
-    )
 
     logger.info("Avvio scraping di %d seed -> %s", len(seeds), writer.output_path)
 
+    fetch_statuses = Counter()
     for _seed, result in crawl_seeds(crawler, seeds, state=crawl_state,
                                      max_parallel_domains=crawl_cfg.get("max_parallel_domains", 1)):
+        fetch_statuses[result.status] += 1
         if result.status == "ok":
             record = writer.process(result)
             if record:
@@ -416,6 +427,19 @@ def run(config_path: str, verbose: bool, reset_state: bool):
             "Stato di crawling salvato in %s (%d URL totali visitati finora).",
             crawl_state.state_path, len(crawl_state.visited),
         )
+
+    if report_json:
+        click.echo(json.dumps({
+            "schema_version": 1,
+            "dataset_path": str(writer.output_path),
+            "seed_count": len(seeds),
+            "fetch_statuses": dict(fetch_statuses),
+            "pipeline": writer.stats,
+            "crawl_state": {
+                "enabled": bool(crawl_state.state_path),
+                "visited_urls": len(crawl_state.visited),
+            },
+        }, indent=2, sort_keys=True, ensure_ascii=False))
 
 
 @cli.command()
@@ -545,7 +569,8 @@ def review(dataset_path: str, limit: int, preview_chars: int):
 @click.option("--top-domains", type=int, default=10, help="Quanti domini principali mostrare")
 @click.option("--top-percent", type=float, default=10.0,
               help="Percentuale di domini principali da considerare 'top' (10 default, 5 se SME)")
-def stats(dataset_path: str, top_domains: int, top_percent: float):
+@click.option("--html", is_flag=True, help="Stampa un report HTML navigabile nel browser")
+def stats(dataset_path: str, top_domains: int, top_percent: float, html: bool):
     """Statistiche rapide su un dataset JSONL gia' prodotto: numero di
     record, distribuzione delle parole, domini principali, licenze,
     PII redatte e reservation TDM residue.
@@ -557,12 +582,27 @@ def stats(dataset_path: str, top_domains: int, top_percent: float):
             if line:
                 records.append(json.loads(line))
 
-    if not records:
+    if not records and not html:
         click.echo(f"Nessun record trovato in {dataset_path}.")
         return
 
     result = compute_stats(records, top_percent=top_percent)
-    click.echo(render_stats_text(result, top_n_domains=top_domains))
+    render = render_stats_html if html else render_stats_text
+    click.echo(render(result, top_n_domains=top_domains))
+
+
+@cli.command("compliance-check")
+@click.option("--dataset", "dataset_path",
+              type=click.Path(exists=True, dir_okay=False, readable=True), required=True)
+@click.option("--fail-on-findings", is_flag=True,
+              help="Esce con codice 1 in presenza di record da rivedere")
+def compliance_check(dataset_path: str, fail_on_findings: bool):
+    """Segnala evidenze mancanti e riserve nei record JSONL."""
+    with open(dataset_path, encoding="utf-8") as dataset:
+        report = check_dataset(dataset)
+    click.echo(json.dumps(report, indent=2, sort_keys=True))
+    if fail_on_findings and report["records_flagged"]:
+        raise click.exceptions.Exit(1)
 
 
 if __name__ == "__main__":

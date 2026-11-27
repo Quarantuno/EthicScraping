@@ -246,6 +246,26 @@ class TestStreamingDownload(unittest.TestCase):
         self.assertEqual(result.canonical_url, "https://example.com/page")
         self.assertTrue(get.call_args.kwargs["stream"])
 
+    def test_page_redirect_is_reported_without_following_location(self):
+        resp = _real_response(b"", status=302, extra_headers={"Location": "https://other.example/"})
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp) as get:
+            result = _make_fetcher().fetch("https://example.com/page")
+        self.assertEqual(result.status, "skipped_redirect")
+        self.assertEqual(get.call_count, 1)
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+
+    def test_tdm_reservation_from_http_headers_is_retained(self):
+        policy = "https://example.com/tdm"
+        resp = _real_response(
+            b"<html><body>Article</body></html>",
+            extra_headers={"TDM-Reservation": "1", "TDM-Policy": policy},
+        )
+        with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
+            result = _make_fetcher().fetch("https://example.com/page")
+        self.assertEqual(result.tdm_reservation, {
+            "reserved": True, "source": "http_header", "policy_url": policy,
+        })
+
     def test_skipped_content_type_never_downloads_the_body(self):
         resp = _real_response(b"%PDF-1.4" + b"x" * 100000, content_type="application/pdf")
         with _allow_all_robots(), patch("scraper.fetcher.requests.get", return_value=resp):
