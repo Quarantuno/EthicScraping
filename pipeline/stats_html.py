@@ -18,7 +18,50 @@ def _breakdown(title, rows, searchable=False):
     return f'<section><h2>{title}</h2>{search}{empty}<ul{section_id}>{bars}</ul></section>'
 
 
-def render_html(stats, top_n_domains=10):
+_ISSUE_LABELS = {
+    "invalid_record": "Record JSON non valido",
+    "missing_source_url": "URL di provenienza mancante o non valido",
+    "license_evidence_for_review": "Licenza da verificare",
+    "tdm_reservation": "Riserva TDM rilevata",
+    "missing_tdm_reservation_evidence": "Verifica TDM assente",
+    "ai_optout": "Opt-out noai rilevato",
+    "missing_ai_optout_evidence": "Verifica noai assente",
+}
+
+
+def _compliance_panel(report):
+    counts = report["counts"]
+    heading = '<section id="compliance"><h2>Controlli di compliance</h2>'
+    summary = (
+        f'<p><strong>{report["records_flagged"]:,}</strong> righe da rivedere '
+        f'su <strong>{report["records_checked"]:,}</strong> controllate.</p>'
+    )
+    note = '<p>Verifica le segnalazioni nel file originale prima di usare il dataset.</p>'
+    if not counts:
+        return heading + summary + "</section>"
+
+    options = "".join(
+        f'<option value="{escape(code)}">{escape(_ISSUE_LABELS.get(code, code))} ({count:,})</option>'
+        for code, count in sorted(counts.items())
+    )
+    rows = []
+    for finding in report["findings"]:
+        issues = finding["issues"]
+        labels = ", ".join(_ISSUE_LABELS.get(code, code) for code in issues)
+        codes = escape(" ".join(issues))
+        rows.append(f'<tr data-issues="{codes}"><th scope="row">{finding["line"]}</th>'
+                    f'<td>{escape(labels)}</td></tr>')
+    return (heading + summary + note + '<details><summary>Mostra le righe da rivedere</summary>'
+            '<label for="issue-filter">Tipo di segnalazione</label>'
+            '<select id="issue-filter" aria-controls="findings">'
+            '<option value="">Tutti i tipi</option>' + options + '</select>'
+            '<p role="status" id="filter-status"></p>'
+            '<table id="findings"><thead><tr><th scope="col">Riga</th>'
+            '<th scope="col">Segnalazioni</th></tr></thead><tbody>'
+            + "".join(rows) + '</tbody></table></details></section>')
+
+
+def render_html(stats, top_n_domains=10, compliance=None):
     domains = stats["domains"]
     quality = stats["quality"]
     summary = (
@@ -36,12 +79,19 @@ def render_html(stats, top_n_domains=10):
         + _breakdown("Licenze", stats["licenses"])
         + _breakdown("Dati personali oscurati", sorted(stats["pii"].items()))
     )
+    title = "Dashboard del dataset" if compliance is not None else "Statistiche del dataset"
+    navigation = (
+        '<nav aria-label="Sezioni del report"><a href="#statistics">Statistiche</a>'
+        '<a href="#compliance">Compliance</a></nav>'
+        if compliance is not None else ""
+    )
+    audit = _compliance_panel(compliance) if compliance is not None else ""
     return f"""<!doctype html>
 <html lang="it">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Statistiche del dataset · EthicScraping</title>
+<title>{title} · EthicScraping</title>
 <style>
   :root {{ color-scheme: light; font: 16px/1.45 system-ui, sans-serif;
     color: #162c28; background: #eef4f0; }}
@@ -51,6 +101,15 @@ def render_html(stats, top_n_domains=10):
     border-radius: 1.4rem; }}
   header p {{ margin: 0; color: #bbe0cd; }}
   h1 {{ font-size: clamp(1.8rem, 5vw, 3.25rem); margin: .25rem 0 0; }}
+  nav {{ display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.25rem; }}
+  nav a {{ color: #fff; border: 1px solid #77ac98; padding: .4rem .75rem; border-radius: .5rem; }}
+  #compliance {{ margin-top: 1.2rem; }}
+  details summary {{ cursor: pointer; font-weight: 650; margin-bottom: .6rem; }}
+  details label {{ display: block; }}
+  table {{ border-collapse: collapse; table-layout: fixed; width: 100%; }}
+  th, td {{ text-align: left; border-bottom: 1px solid #cee0d6; padding: .5rem; overflow-wrap: anywhere; }}
+  th:first-child {{ width: 4rem; }}
+  [hidden] {{ display: none !important; }}
   dl, .charts {{ display: grid; gap: 1rem; }}
   dl {{ grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); margin: 1.2rem 0; }}
   dl div, section {{ background: #fff; border: 1px solid #cee0d6;
@@ -59,22 +118,22 @@ def render_html(stats, top_n_domains=10):
   dd {{ margin: .2rem 0 0; font-size: 1.55rem; font-weight: 700; }}
   .charts {{ grid-template-columns: repeat(auto-fit, minmax(min(100%, 23rem), 1fr)); }}
   h2 {{ font-size: 1.15rem; margin: 0 0 .75rem; }}
-  input {{ box-sizing: border-box; width: 100%; font: inherit; color: inherit;
+  input, select {{ box-sizing: border-box; width: 100%; font: inherit; color: inherit;
     padding: .45rem .65rem; border: 1px solid #769287; border-radius: .4rem; }}
-  input:focus-visible {{ outline: 2px solid #237157; outline-offset: 2px; }}
+  :focus-visible {{ outline: 2px solid #237157; outline-offset: 2px; }}
   ul {{ list-style: none; margin: .75rem 0 0; padding: 0; }}
   li {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .75rem;
     overflow-wrap: anywhere; margin: .7rem 0; }}
-  li[hidden] {{ display: none; }}
   progress {{ grid-column: 1 / -1; width: 100%; height: .5rem; accent-color: #237157; }}
   footer {{ margin-top: 1.2rem; padding: 0 .25rem; color: #45635a; }}
 </style>
 </head>
 <body>
 <main>
-  <header><p>EthicScraping</p><h1>Statistiche del dataset</h1></header>
-  <dl>{cards}</dl>
+  <header><p>EthicScraping</p><h1>{title}</h1>{navigation}</header>
+  <dl id="statistics">{cards}</dl>
   <div class="charts">{charts}</div>
+  {audit}
   <footer>
     <p>Indice di concentrazione dei domini (HHI): {stats["domain_concentration_index"]}
     · Record con riserva TDM: {stats["tdm"]["records_with_tdm_reservation_flag"]}
@@ -96,6 +155,20 @@ def render_html(stats, top_n_domains=10):
         if (!row.hidden) matches += 1;
       }}
       status.textContent = matches ? "" : "Nessun dominio corrispondente.";
+    }});
+  }}
+  const issueFilter = document.getElementById("issue-filter");
+  if (issueFilter) {{
+    const findings = [...document.querySelectorAll("#findings tbody tr")];
+    const status = document.getElementById("filter-status");
+    issueFilter.addEventListener("change", () => {{
+      const code = issueFilter.value;
+      let visible = 0;
+      for (const row of findings) {{
+        row.hidden = Boolean(code) && !row.dataset.issues.split(" ").includes(code);
+        if (!row.hidden) visible += 1;
+      }}
+      status.textContent = visible + " righe mostrate.";
     }});
   }}
 </script>

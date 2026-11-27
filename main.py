@@ -19,7 +19,10 @@ import logging
 import os
 import re
 import sys
+import tempfile
+import webbrowser
 from collections import Counter
+from pathlib import Path
 
 import click
 import yaml
@@ -589,6 +592,41 @@ def stats(dataset_path: str, top_domains: int, top_percent: float, html: bool):
     result = compute_stats(records, top_percent=top_percent)
     render = render_stats_html if html else render_stats_text
     click.echo(render(result, top_n_domains=top_domains))
+
+
+@cli.command()
+@click.option("--dataset", "dataset_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              default="dataset/output.jsonl", show_default=True, help="Dataset JSONL da aprire")
+@click.option("--output", type=click.Path(dir_okay=False, path_type=Path),
+              help="Salva il report in un file HTML a scelta")
+@click.option("--open/--no-open", "open_browser", default=True,
+              help="Apri il report nel browser predefinito")
+def dashboard(dataset_path: Path, output: Path, open_browser: bool):
+    """Apri statistiche e controlli del dataset in un report HTML locale."""
+    try:
+        with dataset_path.open(encoding="utf-8") as dataset:
+            audit = check_dataset(dataset)
+            invalid = {row["line"] for row in audit["findings"] if "invalid_record" in row["issues"]}
+            dataset.seek(0)
+            records = [json.loads(line) for number, line in enumerate(dataset, 1)
+                       if line.strip() and number not in invalid]
+        report = render_stats_html(compute_stats(records, top_percent=100),
+                                   top_n_domains=25, compliance=audit)
+        if output is None:
+            output = Path(tempfile.mkdtemp(prefix="ethicscraping-")) / "dashboard.html"
+        with output.open("x", encoding="utf-8") as destination:
+            destination.write(report)
+    except (OSError, TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    output = output.resolve()
+    click.echo(f"Dashboard salvata in {output}")
+    if open_browser:
+        try:
+            opened = webbrowser.open(output.as_uri())
+        except webbrowser.Error:
+            opened = False
+        if not opened:
+            click.echo("Apri il file HTML nel tuo browser.", err=True)
 
 
 @cli.command("compliance-check")

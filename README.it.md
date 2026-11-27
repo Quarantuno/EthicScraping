@@ -318,6 +318,17 @@ senza bisogno di un server.
 python main.py stats --dataset dataset/output.jsonl --html > statistiche.html
 ```
 
+#### Apri la dashboard del dataset
+
+```bash
+python3 main.py dashboard --dataset dataset/output.jsonl
+```
+
+La dashboard si apre nel browser predefinito e unisce grafici e
+segnalazioni di compliance filtrabili. Funziona in locale e indica le
+righe da rivedere. Usa `--output report.html --no-open` per salvare una
+copia senza avviare il browser.
+
 Riepilogo rapido di un dataset gia' prodotto: numero di record,
 distribuzione delle parole, domini principali, mix di licenze, PII
 redatte, e quanti record portano ancora una reservation TDM o un opt-out `noai`.
