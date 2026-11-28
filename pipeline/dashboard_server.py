@@ -74,7 +74,52 @@ def _change_seed(path, value, remove=False):
     return message
 
 
-def _home(config, token, message, running):
+_FETCH_LABELS = {
+    "ok": "Pagine scaricate",
+    "blocked_robots": "Bloccate da robots.txt",
+    "blocked_denylist": "Domini esclusi",
+    "skipped_redirect": "Redirect saltati",
+    "skipped_content_type": "Tipi di contenuto esclusi",
+    "skipped_too_large": "Pagine troppo grandi",
+    "error": "Errori HTTP o di rete",
+}
+
+_PIPELINE_LABELS = {
+    "skipped_license": "Licenza",
+    "skipped_duplicate": "Duplicati",
+    "skipped_too_short": "Testo troppo breve",
+    "skipped_fetch": "Contenuto non disponibile",
+    "skipped_tdm_reservation": "Riserva TDM",
+    "skipped_ai_optout": "Opt-out noai",
+    "skipped_quality": "Qualità del testo",
+    "skipped_language": "Lingua esclusa",
+}
+
+
+def _count_list(counts, labels, empty):
+    rows = "".join(
+        f"<dt>{escape(labels.get(code, code))}</dt><dd>{count:,}</dd>"
+        for code, count in sorted(counts.items()) if count
+    )
+    return f'<dl class="counts">{rows}</dl>' if rows else f"<p>{empty}</p>"
+
+
+def _crawl_summary(report):
+    if report is None:
+        return ""
+    pipeline = report["pipeline"]
+    written = pipeline["written"]
+    fetch = _count_list(report["fetch_statuses"], _FETCH_LABELS, "Nessuna richiesta in questa raccolta.")
+    skips = _count_list({key: count for key, count in pipeline.items() if key != "written"},
+                        _PIPELINE_LABELS, "Nessun record scartato dalla pipeline.")
+    return f"""<section><h2>Ultima raccolta completata</h2>
+<p><strong>{written:,}</strong> nuovi record salvati</p>
+<div class="outcomes"><div><h3>Esiti delle richieste</h3>{fetch}</div>
+<div><h3>Motivi di scarto</h3>{skips}</div></div>
+<a href="/run-report.json" download>Scarica il riepilogo JSON</a></section>"""
+
+
+def _home(config, token, message, running, last_report=None):
     disabled = " disabled" if running else ""
     run_disabled = " disabled" if running or not config["seeds"] else ""
     refresh = '<meta http-equiv="refresh" content="3">' if running else ""
@@ -104,6 +149,11 @@ def _home(config, token, message, running):
   .secondary {{ background:#e1efe7;color:#174536 }}
   button:disabled {{ opacity:.55;cursor:default }}
   pre {{ color:#193d33;white-space:pre-wrap;overflow-wrap:anywhere }}
+  .outcomes {{ display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr)) }}
+  .outcomes h3 {{ margin:.5rem 0 }}
+  .counts {{ display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.3rem .8rem }}
+  .counts dd {{ margin:0;font-weight:650 }}
+  section a:not(.button) {{ color:#175744 }}
 </style>
 <main><header><p>EthicScraping</p><h1>Pannello di raccolta</h1></header>
 <section><h2>Fonti</h2><form method="post" action="/seed">
@@ -117,7 +167,8 @@ def _home(config, token, message, running):
 <a class="button" href="/report">Apri statistiche e controlli</a>
 <a class="button secondary" href="/review">Rivedi i record</a></div>
 <p>Il report verifica il dataset salvato. La raccolta può richiedere alcuni minuti.</p>
-<pre role="status">{escape(message)}</pre></section></main></html>"""
+<pre role="status">{escape(message)}</pre></section>
+{_crawl_summary(last_report)}</main></html>"""
 
 
 def _dataset_path(config):
@@ -207,9 +258,10 @@ def serve(config_path, open_browser):
     message = ""
     process = None
     result_file = None
+    last_report = None
 
     def update_status():
-        nonlocal process, result_file, message
+        nonlocal process, result_file, message, last_report
         if process is None or process.poll() is None:
             return
         message = "Raccolta interrotta. Controlla il terminale per i dettagli."
@@ -217,10 +269,8 @@ def serve(config_path, open_browser):
             if process.returncode == 0:
                 result_file.seek(0)
                 report = json.load(result_file)
-                message = (
-                    f'Raccolta terminata. Nuovi record: {report["pipeline"]["written"]}.\n'
-                    f'Esiti richieste: {json.dumps(report["fetch_statuses"], ensure_ascii=False)}'
-                )
+                message = f'Raccolta terminata. Nuovi record: {report["pipeline"]["written"]}.'
+                last_report = {key: value for key, value in report.items() if key != "dataset_path"}
         except (OSError, ValueError, TypeError, KeyError):
             message = "Raccolta terminata. Verifica il dataset e il terminale per i dettagli."
         finally:
@@ -251,7 +301,19 @@ def serve(config_path, open_browser):
                 config = _read_config(config_path)
                 route = urlsplit(self.path)
                 if route.path == "/":
-                    self._send(_home(config, token, message, process is not None))
+                    self._send(_home(config, token, message, process is not None, last_report))
+                elif route.path == "/run-report.json":
+                    if last_report is None:
+                        self._send("Nessun riepilogo disponibile.", 404)
+                        return
+                    payload = json.dumps(last_report, indent=2, ensure_ascii=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Disposition", 'attachment; filename="raccolta-ethicscraping.json"')
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(payload)
                 elif route.path in {"/report", "/report/approved", "/review"}:
                     if process is not None:
                         self._send('<p>Raccolta in corso. Il dataset sarà disponibile al termine.</p>'

@@ -351,6 +351,9 @@ saltare ogni record. Le decisioni sono condivise con il comando `review`
 e vengono salvate nei file JSONL di revisione esistenti. Un record
 saltato resta in attesa e può essere ripreso più tardi.
 
+A fine raccolta, il pannello mostra gli esiti delle richieste e i motivi
+di scarto. Il riepilogo JSON è scaricabile finché il pannello resta aperto.
+
 Riepilogo rapido di un dataset gia' prodotto: numero di record,
 distribuzione delle parole, domini principali, mix di licenze, PII
 redatte, e quanti record portano ancora una reservation TDM o un opt-out `noai`.

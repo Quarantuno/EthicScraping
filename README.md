@@ -333,6 +333,9 @@ Open the review page after a crawl to approve, reject, or skip records.
 Decisions are shared with the `review` command and saved to the existing
 JSONL review outputs. Skipped records remain pending for a later pass.
 
+After a crawl finishes, the panel shows fetch outcomes and reasons for
+discarding records. The JSON report is downloadable while the panel is running.
+
 Quick summary of a dataset already produced: record count, word-count
 distribution, top domains, license mix, PII redaction totals, and how
 many records still carry a TDM reservation or `noai` opt-out flag.
